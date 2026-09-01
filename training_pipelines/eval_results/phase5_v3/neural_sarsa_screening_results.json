@@ -1,0 +1,23 @@
+[
+  {
+    "config_id": "sarsa_a",
+    "learning_rate": 0.0002,
+    "gamma": 0.99,
+    "epsilon_end": 0.03,
+    "best_eval_cost": 1215971.0
+  },
+  {
+    "config_id": "sarsa_b",
+    "learning_rate": 0.0001,
+    "gamma": 0.99,
+    "epsilon_end": 0.05,
+    "best_eval_cost": 1215971.0
+  },
+  {
+    "config_id": "sarsa_c",
+    "learning_rate": 0.0003,
+    "gamma": 0.98,
+    "epsilon_end": 0.03,
+    "best_eval_cost": 1215971.0
+  }
+]

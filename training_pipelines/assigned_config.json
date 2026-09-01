@@ -1,0 +1,36 @@
+
+{
+  "project_version": "IITM-6002W-RL-Inventory-2026-v1",
+  "roll_number": "DA25M579",
+  "variant_id": "V030",
+  "demand_multiplier_profile": [
+    1.05,
+    1.0,
+    0.95
+  ],
+  "initial_inventory_profile": [
+    100,
+    120,
+    80
+  ],
+  "lead_time_delay_profile": [
+    0.0,
+    0.05,
+    0.1
+  ],
+  "declared_ranges": {
+    "demand_multiplier": [
+      0.85,
+      1.15
+    ],
+    "initial_inventory": [
+      80,
+      120
+    ],
+    "lead_time_delay_probability": [
+      0.0,
+      0.1
+    ]
+  },
+  "config_fingerprint": "5566e180ff842b10"
+}

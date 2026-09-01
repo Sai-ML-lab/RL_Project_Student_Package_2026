@@ -1,0 +1,24 @@
+
+{
+  "technique_category": "Deep Q-Network (DQN)",
+  "policy_file": "policy.py",
+  "model_artifact": "model.zip",
+  "observation_representation": "35-dim hand-engineered features (training_utils/obs_wrapper.py::flatten_observation); joint 1331-action space encoded as a single Discrete index via base-11 encoding (action_wrapper.py), decoded to quantities {0, 10, ..., 100} per product at inference time",
+  "reward_used_during_training": "Base environment reward (negative scaled daily cost) plus an auxiliary ShapedReward wrapper (extra stockout penalty, discard/utilisation penalty, order-batching nudge) annealed linearly to zero over the training budget. All reported cost/service metrics use the raw, unshaped environment reward -- shaping never affects evaluation or this frozen policy.",
+  "main_hyperparameters": {
+    "learning_rate": 0.0005,
+    "buffer_size": 200000,
+    "target_update_interval": 2000,
+    "exploration_fraction": 0.3,
+    "net_arch": [256, 256],
+    "total_timesteps": 150000
+  },
+  "training_pipeline_scripts": ["training_pipelines/training_scripts/train_dqn.py"],
+  "local_validation_performance": {
+    "suite": "A (assigned configuration, 40 seeds x 5 scenario modes = 200 episodes)",
+    "mean_cost": 96871.3,
+    "mean_service_level": 0.988895,
+    "minimum_scenario_service_level": 0.988213
+  },
+  "leaderboard_submission_id": null
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "ent_coef": 0.0,
+    "learning_rate": 0.0001,
+    "best_mean_reward": -Infinity
+  },
+  {
+    "ent_coef": 0.0,
+    "learning_rate": 0.0003,
+    "best_mean_reward": -Infinity
+  },
+  {
+    "ent_coef": 0.001,
+    "learning_rate": 0.0001,
+    "best_mean_reward": -Infinity
+  },
+  {
+    "ent_coef": 0.001,
+    "learning_rate": 0.0003,
+    "best_mean_reward": -Infinity
+  },
+  {
+    "ent_coef": 0.003,
+    "learning_rate": 0.0001,
+    "best_mean_reward": -Infinity
+  },
+  {
+    "ent_coef": 0.003,
+    "learning_rate": 0.0003,
+    "best_mean_reward": -Infinity
+  }
+]
