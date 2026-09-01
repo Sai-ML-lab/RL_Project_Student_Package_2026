@@ -1,0 +1,21 @@
+{
+  "technique": "PPO",
+  "representation": "Representation B",
+  "observation_dimension": 76,
+  "training_transitions": 500000,
+  "learning_rate": 0.0006,
+  "seed": 20260727,
+  "local_mean_cost": 83039.2,
+  "local_std_cost": 9777.138818672458,
+  "local_median_cost": 81282.5,
+  "local_service_level": 0.9929729282898659,
+  "scenario_mean_costs": {
+    "random": 85214.0,
+    "seasonal": 83162.5,
+    "shock": 84740.25,
+    "stationary": 82806.25,
+    "trend": 79273.0
+  },
+  "status": "frozen_candidate",
+  "public_ppo_champion_untouched": true
+}
