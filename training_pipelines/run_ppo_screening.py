@@ -12,6 +12,7 @@ callback evaluation was recorded.
 from __future__ import annotations
 
 import argparse
+from email import parser
 import json
 import sys
 from pathlib import Path
@@ -259,6 +260,20 @@ def main() -> None:
         default=SCREEN_TIMESTEPS,
     )
 
+    parser.add_argument(
+    "--learning-rates",
+    type=float,
+    nargs="+",
+    default=list(LEARNING_RATES),
+    )
+
+    parser.add_argument(
+        "--ent-coefs",
+        type=float,
+        nargs="+",
+        default=list(ENT_COEFS),
+    )
+
     args = parser.parse_args()
 
     if args.timesteps < 1:
@@ -273,8 +288,8 @@ def main() -> None:
 
     results: list[dict[str, Any]] = []
 
-    for ent_coef in ENT_COEFS:
-        for lr in LEARNING_RATES:
+    for ent_coef in args.ent_coefs:
+        for lr in args.learning_rates:
 
             config_id = _config_id(
                 ent_coef,
