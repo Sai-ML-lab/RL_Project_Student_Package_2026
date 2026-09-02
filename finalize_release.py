@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -23,13 +23,6 @@ REPORT = ROOT / "Project_Report_DA25M579_V030.docx"
 A2C_SOURCE_MODEL = MODELS / "a2c_rep_c_experiments" / "screen_lr5e-04_g0.99_lam0.95_ent0.001_n64_vf0.5_shape_seed20260902" / "final_model.zip"
 A2C_FINAL_MODEL = SUBMISSIONS / "a2c" / "model.zip"
 
-KEEP_TRAINING_ROOT = {
-    TRAINING / "assigned_config.json",
-    TRAINING / "src",
-    TRAINING / "training_scripts",
-    TRAINING / "training_utils",
-}
-
 KEEP_TRAINING_SCRIPTS = {
     "common.py",
     "train_ppo_rep_b_experiment.py",
@@ -38,7 +31,6 @@ KEEP_TRAINING_SCRIPTS = {
     "train_a2c_rep_c.py",
     "train_double_dqn_experiment.py",
 }
-
 KEEP_SOURCE_FILES = {
     TRAINING / "src" / "algorithms" / "neural_sarsa.py",
     TRAINING / "src" / "algorithms" / "common" / "checkpoint.py",
@@ -53,14 +45,12 @@ KEEP_SOURCE_FILES = {
     TRAINING / "src" / "features" / "engineered.py",
     TRAINING / "src" / "features" / "representation_c.py",
 }
-
 KEEP_RESULTS = {
     RESULTS / "final_results.csv",
     RESULTS / "ppo_learning_curve.png",
     RESULTS / "dqn_learning_curve.png",
     RESULTS / "a2c_learning_curve.png",
 }
-
 FINAL_POLICIES = [
     SUBMISSIONS / "ppo" / "policy.py",
     SUBMISSIONS / "dqn" / "policy.py",
@@ -68,7 +58,6 @@ FINAL_POLICIES = [
     SUBMISSIONS / "a2c" / "policy.py",
     SUBMISSIONS / "double_dqn" / "policy.py",
 ]
-
 REQUIRED_ARTIFACTS = [
     SUBMISSIONS / "ppo" / "model.zip",
     SUBMISSIONS / "dqn" / "model.zip",
@@ -76,6 +65,13 @@ REQUIRED_ARTIFACTS = [
     SUBMISSIONS / "a2c" / "model.zip",
     SUBMISSIONS / "double_dqn" / "model.zip",
 ]
+EXPECTED_METADATA = {
+    "ppo": ("PPO", "Representation B", 76, 500000),
+    "dqn": ("DQN", "35-dim hand-engineered features", 35, 150000),
+    "neural_sarsa": ("Neural Network SARSA", "76-dim Representation B", 76, 500000),
+    "a2c": ("A2C", "99-dimensional Representation C", 99, 500000),
+    "double_dqn": ("Double DQN", "35-dimensional hand-engineered feature vector", 35, None),
+}
 
 
 def fail(message: str) -> None:
@@ -95,24 +91,53 @@ def validate_inputs() -> None:
         fail(f"Unexpected variant_id: {config.get('variant_id')!r}")
     if config.get("config_fingerprint") != "5566e180ff842b10":
         fail(f"Unexpected config fingerprint: {config.get('config_fingerprint')!r}")
-    print("OK assigned configuration")
-
-    required = [NOTEBOOK, README, REPORT]
-    required += [*FINAL_POLICIES, *REQUIRED_ARTIFACTS]
+    required = [NOTEBOOK, README, REPORT, *FINAL_POLICIES, *REQUIRED_ARTIFACTS]
     missing = [str(p.relative_to(ROOT)) for p in required if not p.exists()]
     if missing:
         fail("Missing required finalization inputs: " + ", ".join(missing))
+    print("OK assigned configuration")
     print("OK required finalization inputs")
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def copy_final_a2c_model() -> None:
     if not A2C_SOURCE_MODEL.exists():
         fail(f"Missing A2C source model: {A2C_SOURCE_MODEL.relative_to(ROOT)}")
+    source_hash = sha256(A2C_SOURCE_MODEL)
     A2C_FINAL_MODEL.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(A2C_SOURCE_MODEL, A2C_FINAL_MODEL)
     if A2C_FINAL_MODEL.stat().st_size != A2C_SOURCE_MODEL.stat().st_size:
         fail("A2C model copy size mismatch")
-    print("OK A2C final model copied")
+    if sha256(A2C_FINAL_MODEL) != source_hash:
+        fail("A2C model SHA-256 mismatch after copy")
+    print("OK A2C final model copied and hash-verified")
+
+
+def _training_budget(meta: dict) -> int | None:
+    for value in (
+        meta.get("training_transitions"),
+        meta.get("main_hyperparameters", {}).get("total_timesteps"),
+        meta.get("main_hyperparameters", {}).get("total_transitions"),
+        meta.get("hyperparameters", {}).get("total_timesteps"),
+    ):
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _technique(meta: dict) -> str | None:
+    return meta.get("technique") or meta.get("technique_category")
+
+
+def _representation(meta: dict) -> str:
+    return str(meta.get("representation") or meta.get("observation_representation") or "")
 
 
 def validate_text_files() -> None:
@@ -120,8 +145,6 @@ def validate_text_files() -> None:
     if nb.get("nbformat") != 4:
         fail("Final notebook is not nbformat 4")
     nb_text = "\n".join("".join(c.get("source", [])) for c in nb.get("cells", []))
-    # These checks intentionally verify the course-required content semantically
-    # against the final notebook's actual headings/phrasing.
     required_any = [
         ("Assigned parameter variant",),
         ("Reproducible final training pipelines",),
@@ -138,7 +161,6 @@ def validate_text_files() -> None:
     for token in ["111,216.54", "111216.54", "114047.62", "Double-DQN pipeline use 76-dimensional", "public score pending"]:
         if token in nb_text:
             fail(f"Stale notebook text detected: {token}")
-
     readme = README.read_text(encoding="utf-8")
     for token in ["A2C + Representation C", "94,660.12", "99,566.57", "V030", "RL_Project_Final.ipynb"]:
         if token not in readme:
@@ -150,143 +172,142 @@ def validate_text_files() -> None:
 
 
 def validate_submission_layout() -> None:
-    expected = {
-        "ppo": ("policy.py", "model.zip", "PPO"),
-        "dqn": ("policy.py", "model.zip", "DQN"),
-        "neural_sarsa": ("policy.py", "policy_state.pt", "Neural Network SARSA"),
-        "a2c": ("policy.py", "model.zip", "A2C"),
-        "double_dqn": ("policy.py", "model.zip", "Double DQN"),
+    expected_files = {
+        "ppo": ("policy.py", "model.zip"),
+        "dqn": ("policy.py", "model.zip"),
+        "neural_sarsa": ("policy.py", "policy_state.pt"),
+        "a2c": ("policy.py", "model.zip"),
+        "double_dqn": ("policy.py", "model.zip"),
     }
-    for folder, (policy_name, model_name, label) in expected.items():
-        policy = SUBMISSIONS / folder / policy_name
-        model = SUBMISSIONS / folder / model_name
-        metadata = SUBMISSIONS / folder / "metadata.json"
-        if not policy.exists() or not model.exists() or not metadata.exists():
-            fail(f"Incomplete submission bundle for {label}")
+    for folder, (policy_name, model_name) in expected_files.items():
+        base = SUBMISSIONS / folder
+        policy, model, metadata = base / policy_name, base / model_name, base / "metadata.json"
+        if not all(p.exists() for p in (policy, model, metadata)):
+            fail(f"Incomplete submission bundle for {folder}")
         meta = json.loads(metadata.read_text(encoding="utf-8"))
-        if meta.get("technique") != label:
-            fail(f"Wrong technique metadata for {label}: {meta.get('technique')!r}")
-    print("OK final submission layout")
+        label, rep_expected, dim, budget = EXPECTED_METADATA[folder]
+        actual = _technique(meta)
+        if actual != label:
+            fail(f"Wrong technique metadata for {label}: {actual!r}")
+        rep = _representation(meta)
+        if rep_expected not in rep:
+            fail(f"Wrong representation metadata for {label}: {rep!r}")
+        if str(dim) not in rep:
+            fail(f"Missing observation dimension {dim} for {label}: {rep!r}")
+        if budget is not None and _training_budget(meta) != budget:
+            fail(f"Wrong training budget for {label}: {_training_budget(meta)!r}, expected {budget}")
+    print("OK final submission layout and metadata")
 
 
-def validate_script_imports() -> None:
-    # Compile all retained Python sources before destructive cleanup.
-    sources = [
-        p for p in KEEP_SOURCE_FILES
-        if p.exists()
-    ]
-    sources += [
-        TRAINING / "training_scripts" / name
-        for name in KEEP_TRAINING_SCRIPTS
-        if (TRAINING / "training_scripts" / name).exists()
-    ]
-    sources += FINAL_POLICIES
-    for path in sources:
+def validate_python_syntax() -> None:
+    paths = [*FINAL_POLICIES]
+    paths += [p for p in KEEP_SOURCE_FILES if p.exists()]
+    paths += [TRAINING / "training_scripts" / n for n in KEEP_TRAINING_SCRIPTS if (TRAINING / "training_scripts" / n).exists()]
+    for path in paths:
         run([sys.executable, "-m", "py_compile", str(path)])
     print("OK retained Python files compile")
 
 
+def validate_training_utils() -> None:
+    required = [
+        TRAINING / "training_utils" / "rep_c_env.py",
+        TRAINING / "training_utils" / "obs_wrapper.py",
+        TRAINING / "training_utils" / "action_wrapper.py",
+    ]
+    missing = [str(p.relative_to(ROOT)) for p in required if not p.exists()]
+    if missing:
+        fail("Missing required training utility dependencies: " + ", ".join(missing))
+    for path in required:
+        run([sys.executable, "-m", "py_compile", str(path)])
+    print("OK retained training utility dependencies compile")
+
+
 def cleanup() -> None:
-    # Delete experimental folders/files under training_pipelines/models, logs,
-    # eval_results, tuning_results and other non-final material.
     for name in ["models", "logs", "eval_results", "tuning_results"]:
         target = TRAINING / name
         if target.exists():
             shutil.rmtree(target)
-
-    # Remove stale candidate training scripts; retain only the five reproducible recipes.
     scripts_dir = TRAINING / "training_scripts"
     if scripts_dir.exists():
         for path in scripts_dir.iterdir():
-            if path.name not in KEEP_TRAINING_SCRIPTS and path.is_file():
+            if path.is_file() and path.name not in KEEP_TRAINING_SCRIPTS:
                 path.unlink()
-
-    # Retain only explicitly required source files plus package __init__.py files.
     src_dir = TRAINING / "src"
     if src_dir.exists():
         for path in sorted(src_dir.rglob("*"), reverse=True):
-            if path.is_file():
-                if path.name == "__init__.py" or path in KEEP_SOURCE_FILES:
-                    continue
+            if path.is_file() and path.name != "__init__.py" and path not in KEEP_SOURCE_FILES:
                 path.unlink()
         for path in sorted(src_dir.rglob("*"), reverse=True):
             if path.is_dir() and not any(path.iterdir()):
                 path.rmdir()
-
-    # The current training_utils directory is needed by the retained training scripts.
-    # Remove only clearly exploratory leftovers if present.
     utils_dir = TRAINING / "training_utils"
     if utils_dir.exists():
-        for path in utils_dir.rglob("*"):
-            if path.is_file() and path.name.startswith("screen_"):
+        keep_utils = {"rep_c_env.py", "obs_wrapper.py", "action_wrapper.py", "__init__.py"}
+        for path in list(utils_dir.iterdir()):
+            if path.is_file() and path.name not in keep_utils:
                 path.unlink()
-
-    # Retain only final learning curves/results evidence.
+        for path in sorted(utils_dir.rglob("*"), reverse=True):
+            if path.is_dir() and not any(path.iterdir()):
+                path.rmdir()
     if RESULTS.exists():
         for path in RESULTS.iterdir():
             if path.is_file() and path not in KEEP_RESULTS:
                 path.unlink()
-
-    # Remove Python caches generated by validation.
-    for pycache in ROOT.rglob("__pycache__"):
-        if pycache.is_dir():
-            shutil.rmtree(pycache)
-    for pyc in ROOT.rglob("*.pyc"):
-        if pyc.is_file():
-            pyc.unlink()
-
+    for base in [TRAINING, SUBMISSIONS, RESULTS]:
+        for path in sorted(base.rglob("__pycache__"), reverse=True):
+            if path.is_dir():
+                shutil.rmtree(path)
     print("OK cleanup completed")
 
 
 def validate_policies() -> None:
     for policy in FINAL_POLICIES:
-        run([
-            sys.executable,
-            "policy_validation_tests.py",
-            str(policy.relative_to(ROOT)),
-            "--max-seconds-per-call",
-            "0.25",
-        ])
-    print("OK course policy validator passed for all five policies")
+        run([sys.executable, "policy_validation_tests.py", str(policy.relative_to(ROOT)), "--max-seconds-per-call", "0.25"])
+    print("OK course-supplied policy validator")
 
 
-def validate_official_holdout() -> None:
-    helper = ROOT / ".final_holdout_validation_tmp.py"
-    helper.write_text(
-        r'''from pathlib import Path
-import sys
-import pandas as pd
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "training_pipelines"))
-from evaluation import evaluate_policy, summarise_overall
+def validate_training_scripts_importable() -> None:
+    # Import retained training scripts in isolated processes. No training is started.
+    script_names = sorted(KEEP_TRAINING_SCRIPTS - {"common.py"})
+    for name in script_names:
+        run([sys.executable, "-c", f"import runpy; runpy.run_path('training_pipelines/training_scripts/{name}', run_name='__import_check__')"])
+    print("OK retained training scripts import without executing training")
 
-policies = {
-    "PPO": ROOT / "submissions/ppo/policy.py",
-    "DQN": ROOT / "submissions/dqn/policy.py",
-    "Neural Network SARSA": ROOT / "submissions/neural_sarsa/policy.py",
-    "A2C": ROOT / "submissions/a2c/policy.py",
-    "Double DQN": ROOT / "submissions/double_dqn/policy.py",
-}
-rows = []
-for name, path in policies.items():
-    details = evaluate_policy(str(path), max_episodes=200)
-    summary = summarise_overall(details)
-    summary["Technique"] = name
-    rows.append(summary)
 
-df = pd.DataFrame(rows)
-if len(df) != 5 or not (df.get("n_episodes") == 200).all():
-    raise RuntimeError("Official holdout did not evaluate exactly 200 episodes for all five policies")
-print(df.to_string(index=False))
-''',
+def validate_holdout() -> None:
+    temp = ROOT / ".final_holdout_validation_tmp.py"
+    temp.write_text(
+        "from evaluation import evaluate_policy, summarise_overall\n"
+        "from pathlib import Path\n"
+        "policies = [Path('submissions/ppo/policy.py'), Path('submissions/dqn/policy.py'), Path('submissions/neural_sarsa/policy.py'), Path('submissions/a2c/policy.py'), Path('submissions/double_dqn/policy.py')]\n"
+        "for policy in policies:\n"
+        "    print(f'=== HOLDOUT {policy.parent.name} ===')\n"
+        "    results = evaluate_policy(policy_path=policy, seeds=range(900, 940), scenarios=['stationary','seasonal','trend','shock','random'])\n"
+        "    summary = summarise_overall(results)\n"
+        "    print(summary)\n"
+        "    if int(summary['n_episodes']) != 200:\n"
+        "        raise SystemExit(f'Expected 200 episodes for {policy}, got {summary[\"n_episodes\"]}')\n"
+        "print('FULL_HOLDOUT_OK')\n",
         encoding="utf-8",
     )
     try:
-        run([sys.executable, str(helper)])
+        run([sys.executable, str(temp)])
     finally:
-        helper.unlink(missing_ok=True)
-    print("OK official 200-episode holdout validation passed")
+        if temp.exists():
+            temp.unlink()
+    print("OK full 200-episode holdout for all five policies")
+
+
+def validate_final_tree() -> None:
+    forbidden = {"models", "logs", "eval_results", "tuning_results", "a2c_rep_c_experiments", "a3c_rep_c_experiments", "ppo_rep_c_experiments", "dqn_rep_c_experiments", "ddqn_rep_c_experiments", "sarsa_experiments"}
+    found = [str(p.relative_to(ROOT)) for p in TRAINING.rglob("*") if p.is_dir() and p.name in forbidden]
+    if found:
+        fail("Experimental directories remain: " + ", ".join(found))
+    expected_final_top = {"assigned_config.json", "src", "training_scripts", "training_utils"}
+    actual_top = {p.name for p in TRAINING.iterdir()}
+    if actual_top != expected_final_top:
+        fail(f"Unexpected training_pipelines top-level contents: {sorted(actual_top)}")
+    print("OK final tree contains no experimental directories")
 
 
 def main() -> int:
@@ -295,13 +316,20 @@ def main() -> int:
     copy_final_a2c_model()
     validate_text_files()
     validate_submission_layout()
-    validate_script_imports()
+    validate_python_syntax()
+    validate_training_utils()
+    # Import checks must happen before cleanup because some exploratory dependencies are still present.
+    validate_training_scripts_importable()
     cleanup()
+    validate_final_tree()
+    validate_python_syntax()
     validate_policies()
-    validate_official_holdout()
+    validate_holdout()
     print("FINAL RELEASE VALIDATION PASSED")
+    print("Finalization complete. Commit the resulting working tree after reviewing git status/diff.")
     try:
-        Path(__file__).unlink()
+        (ROOT / "finalize_release.py").unlink()
+        print("Removed finalize_release.py after successful finalization")
     except OSError:
         pass
     return 0
