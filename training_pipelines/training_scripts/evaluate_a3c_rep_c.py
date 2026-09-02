@@ -4,20 +4,21 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 
 from evaluation import HOLDOUT_SEEDS, SCENARIO_MODES, evaluate_policy, summarise_overall
-from training_pipelines.src.environment.action_codec import JOINT_ACTION_SIZE, joint_index_to_quantities
 from training_pipelines.src.features.representation_c import (
     REPRESENTATION_C_DIM,
     flatten_observation_representation_c,
 )
 
+N_PRODUCTS = 3
+N_ACTIONS_PER_PRODUCT = 11
+
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int = REPRESENTATION_C_DIM, n_actions: int = JOINT_ACTION_SIZE) -> None:
+    def __init__(self, obs_dim: int = REPRESENTATION_C_DIM) -> None:
         super().__init__()
         self.trunk = nn.Sequential(
             nn.Linear(obs_dim, 128),
@@ -25,12 +26,15 @@ class ActorCritic(nn.Module):
             nn.Linear(128, 128),
             nn.ReLU(),
         )
-        self.actor = nn.Linear(128, n_actions)
+        self.actor_heads = nn.ModuleList(
+            [nn.Linear(128, N_ACTIONS_PER_PRODUCT) for _ in range(N_PRODUCTS)]
+        )
         self.critic = nn.Linear(128, 1)
 
     def forward(self, obs: torch.Tensor):
         h = self.trunk(obs)
-        return self.actor(h), self.critic(h).squeeze(-1)
+        logits = [head(h) for head in self.actor_heads]
+        return logits, self.critic(h).squeeze(-1)
 
 
 def main() -> int:
@@ -40,19 +44,18 @@ def main() -> int:
     args = parser.parse_args()
 
     payload = torch.load(args.model, map_location="cpu")
-    model = ActorCritic(
-        obs_dim=int(payload["obs_dim"]),
-        n_actions=int(payload["n_actions"]),
-    )
+    model = ActorCritic(obs_dim=int(payload.get("obs_dim", REPRESENTATION_C_DIM)))
     model.load_state_dict(payload["state_dict"])
     model.eval()
 
     def policy(observation):
         features = flatten_observation_representation_c(observation)
         with torch.no_grad():
-            logits, _ = model(torch.from_numpy(features).float().unsqueeze(0))
-        action_index = int(torch.argmax(logits, dim=-1).item())
-        return joint_index_to_quantities(action_index)
+            logits_list, _ = model(torch.from_numpy(features).float().unsqueeze(0))
+        action_indices = [
+            int(torch.argmax(logits, dim=-1).item()) for logits in logits_list
+        ]
+        return [index * 10 for index in action_indices]
 
     seeds = HOLDOUT_SEEDS[: max(1, min(args.seeds, len(HOLDOUT_SEEDS)))]
     per_episode, scenario_summary = evaluate_policy(
