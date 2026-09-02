@@ -23,22 +23,7 @@ CONFIG = TRAINING / "assigned_config.json"
 A2C_SOURCE = MODELS / "a2c_rep_c_experiments" / "screen_lr5e-04_g0.99_lam0.95_ent0.001_n64_vf0.5_shape_seed20260902" / "final_model.zip"
 A2C_TARGET = SUBMISSIONS / "a2c" / "model.zip"
 
-FINAL = {
-    "ppo": {"policy": "policy.py", "model": "model.zip", "technique": {"PPO"}, "dim": 76, "budget": 500000},
-    "dqn": {"policy": "policy.py", "model": "model.zip", "technique": {"DQN", "Deep Q-Network (DQN)"}, "dim": 35, "budget": 150000},
-    "neural_sarsa": {"policy": "policy.py", "model": "policy_state.pt", "technique": {"Neural Network SARSA"}, "dim": 76, "budget": 500000},
-    "a2c": {"policy": "policy.py", "model": "model.zip", "technique": {"A2C", "Advantage Actor-Critic (A2C)"}, "dim": 99, "budget": 500000},
-    "double_dqn": {"policy": "policy.py", "model": "model.zip", "technique": {"Double DQN"}, "dim": 35, "budget": None},
-}
-
-KEEP_SCRIPTS = {
-    "common.py",
-    "train_ppo_rep_b_experiment.py",
-    "train_dqn.py",
-    "train_neural_sarsa_final.py",
-    "train_a2c_rep_c.py",
-    "train_double_dqn_experiment.py",
-}
+KEEP_SCRIPTS = {"common.py", "train_ppo_rep_b_experiment.py", "train_dqn.py", "train_neural_sarsa_final.py", "train_a2c_rep_c.py", "train_double_dqn_experiment.py"}
 KEEP_UTILS = {"__init__.py", "rep_c_env.py", "obs_wrapper.py", "action_wrapper.py", "reward_shaping.py", "env_factory.py"}
 KEEP_SOURCE = {
     "algorithms/neural_sarsa.py",
@@ -55,8 +40,21 @@ KEEP_SOURCE = {
     "features/representation_c.py",
 }
 KEEP_RESULTS = {"final_results.csv", "ppo_learning_curve.png", "dqn_learning_curve.png", "a2c_learning_curve.png"}
-POLICIES = [SUBMISSIONS / name / "policy.py" for name in FINAL]
-ARTIFACTS = [SUBMISSIONS / name / spec["model"] for name, spec in FINAL.items()]
+POLICIES = [SUBMISSIONS / name / "policy.py" for name in ("ppo", "dqn", "neural_sarsa", "a2c", "double_dqn")]
+ARTIFACTS = [SUBMISSIONS / "ppo" / "model.zip", SUBMISSIONS / "dqn" / "model.zip", SUBMISSIONS / "neural_sarsa" / "policy_state.pt", SUBMISSIONS / "a2c" / "model.zip", SUBMISSIONS / "double_dqn" / "model.zip"]
+FINAL = {
+    "ppo": {"policy": "policy.py", "model": "model.zip", "technique": {"PPO"}, "dim": 76, "budget": 500000},
+    "dqn": {"policy": "policy.py", "model": "model.zip", "technique": {"DQN", "Deep Q-Network (DQN)"}, "dim": 35, "budget": 150000},
+    "neural_sarsa": {"policy": "policy.py", "model": "policy_state.pt", "technique": {"Neural Network SARSA"}, "dim": 76, "budget": 500000},
+    "a2c": {"policy": "policy.py", "model": "model.zip", "technique": {"A2C", "Advantage Actor-Critic (A2C)"}, "dim": 99, "budget": 500000},
+    "double_dqn": {"policy": "policy.py", "model": "model.zip", "technique": {"Double DQN"}, "dim": 35, "budget": None},
+}
+ROOT_EXPERIMENTAL = {
+    "evaluate_neural_sarsa_official.py", "evaluate_neural_sarsa_top_candidates.py", "run_ddqn_portfolio_screen.py",
+    "run_double_dqn_portfolio_screen.py", "run_neural_sarsa_final_refinement.py", "run_neural_sarsa_long_s2.py",
+    "run_neural_sarsa_portfolio_screen.py", "run_neural_sarsa_promote_v2.py", "run_neural_sarsa_r2_official_holdout.py",
+    "run_neural_sarsa_screening_v2.py",
+}
 
 
 def fail(msg: str) -> None:
@@ -93,12 +91,7 @@ def metadata_dimension(meta: dict, rep: str) -> int | None:
 
 
 def metadata_budget(meta: dict) -> int | None:
-    candidates = [
-        meta.get("training_transitions"),
-        meta.get("main_hyperparameters", {}).get("total_timesteps"),
-        meta.get("main_hyperparameters", {}).get("total_transitions"),
-        meta.get("hyperparameters", {}).get("total_timesteps"),
-    ]
+    candidates = [meta.get("training_transitions"), meta.get("main_hyperparameters", {}).get("total_timesteps"), meta.get("main_hyperparameters", {}).get("total_transitions"), meta.get("hyperparameters", {}).get("total_timesteps")]
     return next((x for x in candidates if isinstance(x, int)), None)
 
 
@@ -129,6 +122,8 @@ def copy_a2c() -> None:
 
 def validate_documents() -> None:
     nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    if nb.get("nbformat") != 4:
+        fail("Final notebook is not nbformat 4")
     text = "\n".join("".join(c.get("source", [])) for c in nb.get("cells", []))
     for token in ["Assigned parameter variant", "Reproducible final training pipelines", "Final public leaderboard comparison", "Final policy and model mapping", "Course-supplied policy validation", "A2C + Representation C"]:
         if token not in text:
@@ -152,9 +147,11 @@ def validate_documents() -> None:
 def validate_metadata() -> None:
     for folder, spec in FINAL.items():
         base = SUBMISSIONS / folder
+        policy = base / spec["policy"]
+        model = base / spec["model"]
         meta_path = base / "metadata.json"
-        if not meta_path.exists():
-            fail(f"Missing metadata.json for {folder}")
+        if not all(p.exists() for p in (policy, model, meta_path)):
+            fail(f"Incomplete submission bundle for {folder}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         technique = metadata_technique(meta)
         if technique not in spec["technique"]:
@@ -172,9 +169,11 @@ def validate_metadata() -> None:
 
 
 def compile_paths(paths: list[Path], label: str) -> None:
+    missing = [str(p.relative_to(ROOT)) for p in paths if not p.exists()]
+    if missing:
+        fail(f"Missing expected retained source files: {missing}")
     for path in paths:
-        if path.exists():
-            run([sys.executable, "-m", "py_compile", str(path)])
+        run([sys.executable, "-m", "py_compile", str(path)])
     print(f"OK {label}")
 
 
@@ -191,6 +190,18 @@ def cleanup() -> None:
         target = TRAINING / name
         if target.exists():
             shutil.rmtree(target)
+
+    for name in ROOT_EXPERIMENTAL:
+        target = TRAINING / name
+        if target.exists() and target.is_file():
+            target.unlink()
+    for name in [".pytest_cache", "tests"]:
+        target = TRAINING / name
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
 
     scripts = TRAINING / "training_scripts"
     if scripts.exists():
@@ -278,10 +289,7 @@ def main() -> int:
     validate_pre_cleanup_code()
     cleanup()
     validate_tree()
-    post = POLICIES[:]
-    post += [TRAINING / "src" / rel for rel in KEEP_SOURCE]
-    post += [TRAINING / "training_scripts" / name for name in KEEP_SCRIPTS]
-    post += [TRAINING / "training_utils" / name for name in KEEP_UTILS]
+    post = POLICIES[:] + [TRAINING / "src" / rel for rel in KEEP_SOURCE] + [TRAINING / "training_scripts" / n for n in KEEP_SCRIPTS] + [TRAINING / "training_utils" / n for n in KEEP_UTILS]
     compile_paths(post, "retained Python files compile after cleanup")
     validate_policies()
     validate_holdout()
