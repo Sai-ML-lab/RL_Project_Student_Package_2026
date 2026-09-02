@@ -46,7 +46,9 @@ def _load_config(config: dict[str, Any] | str | Path | None) -> dict[str, Any]:
     if isinstance(config, dict):
         return config
     if config is None:
-        config = Path(__file__).resolve().parent / "assigned_config.json"
+        # `assigned_config.json` is created inside training_pipelines during
+        # project setup, while this evaluator lives at repository root.
+        config = Path(__file__).resolve().parent / "training_pipelines" / "assigned_config.json"
     with open(config, "r", encoding="utf-8") as handle:
         return json.load(handle)
 
