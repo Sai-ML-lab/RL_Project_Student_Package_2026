@@ -1,4 +1,3 @@
-
 """Shared helpers for training scripts."""
 from __future__ import annotations
 
@@ -44,24 +43,12 @@ def build_training_vec_env(
     seed: int = 20260727,
     shaping_kwargs: dict | None = None,
 ) -> DummyVecEnv:
-    """Build a vectorized training environment.
-
-    The training scripts specify ``anneal_steps`` in terms of the total
-    Stable-Baselines3 timestep budget. Each individual environment wrapper,
-    however, only receives one ``step()`` call per vectorized step.
-
-    Therefore, when multiple environments are used, convert the aggregate
-    timestep budget into the equivalent number of local environment steps.
-    """
-
+    """Build a vectorized training environment."""
     config = load_assigned_config()
-
-    # Copy the dictionary so the caller's object is not mutated.
     effective_shaping_kwargs = dict(shaping_kwargs or {})
 
     if shaping and "anneal_steps" in effective_shaping_kwargs:
         total_training_steps = int(effective_shaping_kwargs["anneal_steps"])
-
         if total_training_steps < 1:
             raise ValueError("anneal_steps must be >= 1.")
 
@@ -91,14 +78,9 @@ def build_training_vec_env(
             env.reset(seed=seed + 1000 * rank)
             return env
 
-        return _factory_wrapper(_make)
+        return _make
 
     return DummyVecEnv([_factory(i) for i in range(n_envs)])
-
-
-def _factory_wrapper(factory: Callable[[], gym.Env]) -> Callable[[], gym.Env]:
-    """Return factory unchanged; kept explicit for clearer closure typing."""
-    return factory
 
 
 def build_eval_vec_env(
@@ -122,7 +104,7 @@ def build_eval_vec_env(
             env.reset(seed=seed + rank)
             return env
 
-        return _factory_wrapper(_make)
+        return _make
 
     return DummyVecEnv([_factory(i) for i in range(n_envs)])
 
