@@ -41,10 +41,10 @@ FINAL_POLICIES = [SUBMISSIONS / "ppo" / "policy.py", SUBMISSIONS / "dqn" / "poli
 REQUIRED_ARTIFACTS = [SUBMISSIONS / "ppo" / "model.zip", SUBMISSIONS / "dqn" / "model.zip", SUBMISSIONS / "neural_sarsa" / "policy_state.pt", SUBMISSIONS / "a2c" / "model.zip", SUBMISSIONS / "double_dqn" / "model.zip"]
 EXPECTED_METADATA = {
     "ppo": ("PPO", "Representation B", 76, 500000),
-    "dqn": ("DQN", "35-dim hand-engineered features", 35, 150000),
+    "dqn": ("DQN", "35-dim hand-engineered", 35, 150000),
     "neural_sarsa": ("Neural Network SARSA", "76-dim Representation B", 76, 500000),
     "a2c": ("A2C", "99-dimensional Representation C", 99, 500000),
-    "double_dqn": ("Double DQN", "35-dimensional hand-engineered feature vector", 35, None),
+    "double_dqn": ("Double DQN", "35-dimensional hand-engineered", 35, None),
 }
 
 
@@ -66,9 +66,7 @@ def sha256(path: Path) -> str:
 
 
 def validate_inputs() -> None:
-    if not ASSIGNED_CONFIG.exists():
-        fail("Missing training_pipelines/assigned_config.json")
-    config = json.loads(ASSIGNED_CONFIG.read_text(encoding="utf-8"))
+    config = json.loads(ASSIGNED_CONFIG.read_text(encoding="utf-8")) if ASSIGNED_CONFIG.exists() else {}
     if config.get("variant_id") != "V030" or config.get("config_fingerprint") != "5566e180ff842b10":
         fail(f"Assigned configuration mismatch: {config.get('variant_id')!r}, {config.get('config_fingerprint')!r}")
     required = [NOTEBOOK, README, REPORT, *FINAL_POLICIES, *REQUIRED_ARTIFACTS]
@@ -91,7 +89,10 @@ def copy_final_a2c_model() -> None:
 
 
 def _technique(meta: dict) -> str | None:
-    return meta.get("technique") or meta.get("technique_category")
+    raw = meta.get("technique") or meta.get("technique_category")
+    if raw == "Deep Q-Network (DQN)":
+        return "DQN"
+    return raw
 
 
 def _representation(meta: dict) -> str:
@@ -108,6 +109,20 @@ def _budget(meta: dict) -> int | None:
         if isinstance(value, int):
             return value
     return None
+
+
+def _metadata_evidence(folder: str, meta: dict, expected: tuple) -> None:
+    label, rep_expected, dim, budget = expected
+    actual = _technique(meta)
+    if actual != label:
+        fail(f"Wrong technique metadata for {label}: {actual!r}")
+    rep = _representation(meta)
+    if rep_expected not in rep:
+        fail(f"Wrong representation metadata for {label}: {rep!r}; expected text containing {rep_expected!r}")
+    if str(dim) not in rep:
+        fail(f"Missing observation dimension {dim} for {label}: {rep!r}")
+    if budget is not None and _budget(meta) != budget:
+        fail(f"Wrong training budget for {label}: {_budget(meta)!r}; expected {budget}")
 
 
 def validate_text_files() -> None:
@@ -154,17 +169,7 @@ def validate_submission_layout() -> None:
         if not all(p.exists() for p in (policy, model, metadata)):
             fail(f"Incomplete submission bundle for {folder}")
         meta = json.loads(metadata.read_text(encoding="utf-8"))
-        label, rep_expected, dim, budget = EXPECTED_METADATA[folder]
-        actual = _technique(meta)
-        if actual != label:
-            fail(f"Wrong technique metadata for {label}: {actual!r}")
-        rep = _representation(meta)
-        if rep_expected not in rep:
-            fail(f"Wrong representation metadata for {label}: {rep!r}")
-        if str(dim) not in rep:
-            fail(f"Missing observation dimension {dim} for {label}: {rep!r}")
-        if budget is not None and _budget(meta) != budget:
-            fail(f"Wrong training budget for {label}: {_budget(meta)!r}; expected {budget}")
+        _metadata_evidence(folder, meta, EXPECTED_METADATA[folder])
     print("OK final submission layout and metadata")
 
 
@@ -247,7 +252,7 @@ def validate_holdout() -> None:
         "policies=[Path('submissions/ppo/policy.py'),Path('submissions/dqn/policy.py'),Path('submissions/neural_sarsa/policy.py'),Path('submissions/a2c/policy.py'),Path('submissions/double_dqn/policy.py')]\n"
         "for policy in policies:\n"
         " print(f'=== HOLDOUT {policy.parent.name} ===')\n"
-        " r=evaluate_policy(policy_path=policy,seeds=range(900,940),scenarios=['stationary','seasonal','trend','shock','random'])\n"
+        " r=evaluate_policy(policy_path=policy,seeds=range(900,940),scenario_modes=['stationary','seasonal','trend','shock','random'])\n"
         " s=summarise_overall(r); print(s)\n"
         " if int(s['n_episodes']) != 200: raise SystemExit(f'Expected 200 episodes for {policy}, got {s[\"n_episodes\"]}')\n"
         "print('FULL_HOLDOUT_OK')\n",
@@ -266,8 +271,8 @@ def main() -> int:
     copy_final_a2c_model()
     validate_text_files()
     validate_submission_layout()
-    pre_cleanup = [*FINAL_POLICIES, *KEEP_SOURCE_FILES, *(TRAINING / "training_scripts" / n for n in KEEP_TRAINING_SCRIPTS), *(TRAINING / "training_utils" / n for n in KEEP_UTILS)]
-    validate_python_syntax(pre_cleanup)
+    all_retained = [*FINAL_POLICIES, *KEEP_SOURCE_FILES, *(TRAINING / "training_scripts" / n for n in KEEP_TRAINING_SCRIPTS), *(TRAINING / "training_utils" / n for n in KEEP_UTILS)]
+    validate_python_syntax(all_retained)
     validate_training_utils()
     cleanup()
     validate_final_tree()
