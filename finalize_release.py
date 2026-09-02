@@ -47,6 +47,7 @@ KEEP_TRAINING_SCRIPTS = {
 KEEP_SRC = {
     "algorithms/neural_sarsa.py",
     "algorithms/common/checkpoint.py",
+    "algorithms/common/env_factory.py",
     "algorithms/common/networks.py",
     "algorithms/common/replay_buffer.py",
     "algorithms/common/schedules.py",
