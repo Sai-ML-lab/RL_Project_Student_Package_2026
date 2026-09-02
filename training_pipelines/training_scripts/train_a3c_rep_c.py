@@ -1,10 +1,11 @@
 """Lightweight A3C trainer for the inventory-control project.
 
 The actor is factorized into three independent 11-way categorical heads (one
-for each product) instead of a single 1331-way head.  This matches the actual
-MultiDiscrete action structure and greatly reduces the policy output space
-while preserving the full joint action space through the product-wise action
-combination.
+for each product) instead of a single 1331-way head. This matches the actual
+MultiDiscrete action structure and greatly reduces the policy output space.
+Workers collect rollouts concurrently; shared-parameter updates are protected
+by a short process lock so gradients from concurrent workers cannot overwrite
+one another during the optimizer step.
 
 The official environment, observation, reward, and evaluator remain unchanged.
 """
@@ -77,15 +78,28 @@ def _seed_everything(seed: int) -> None:
 
 
 def _sample_factorized_action(logits_list: list[torch.Tensor]):
-    distributions = [torch.distributions.Categorical(logits=logits) for logits in logits_list]
+    distributions = [
+        torch.distributions.Categorical(logits=logits) for logits in logits_list
+    ]
     actions = [dist.sample() for dist in distributions]
-    log_prob = sum(dist.log_prob(action) for dist, action in zip(distributions, actions))
-    entropy = sum(dist.entropy() for dist in distributions)
+    log_prob = sum(
+        dist.log_prob(action) for dist, action in zip(distributions, actions)
+    )
+    entropy = sum(
+        dist.entropy() for dist in distributions
+    )
     action_indices = [int(action.item()) for action in actions]
     return action_indices, log_prob.squeeze(), entropy.squeeze()
 
 
-def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter, args) -> None:
+def _worker(
+    rank: int,
+    shared_model: ActorCritic,
+    optimizer: SharedAdam,
+    counter,
+    update_lock,
+    args,
+) -> None:
     seed = args.seed + 1009 * rank
     _seed_everything(seed)
 
@@ -93,7 +107,9 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
         flatten_action=False,
         shaping=args.shaping,
         seed=seed,
-        shaping_kwargs={"anneal_steps": max(1, args.total_steps // max(1, args.workers))},
+        shaping_kwargs={
+            "anneal_steps": max(1, args.total_steps // max(1, args.workers))
+        },
         scenario_mode="random",
         domain_randomization=True,
     )
@@ -117,7 +133,6 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
             counter.value += rollout_steps
 
         local_model.load_state_dict(shared_model.state_dict())
-        local_model.zero_grad(set_to_none=True)
 
         rewards: list[float] = []
         values: list[torch.Tensor] = []
@@ -150,7 +165,8 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
                 obs = flatten_observation_representation_c(raw_obs)
                 if rank == 0:
                     print(
-                        f"[A3C worker {rank}] episode return={episode_return:.2f} steps={episode_steps}",
+                        f"[A3C worker {rank}] episode return={episode_return:.2f} "
+                        f"steps={episode_steps}",
                         flush=True,
                     )
                 episode_return = 0.0
@@ -160,7 +176,9 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
             if dones[-1]:
                 next_value = torch.tensor(0.0)
             else:
-                _, next_value_batch = local_model(torch.from_numpy(obs).float().unsqueeze(0))
+                _, next_value_batch = local_model(
+                    torch.from_numpy(obs).float().unsqueeze(0)
+                )
                 next_value = next_value_batch.squeeze(0).detach()
 
         returns: list[torch.Tensor] = []
@@ -168,7 +186,11 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
         gae = torch.tensor(0.0)
         for t in reversed(range(rollout_steps)):
             mask = 1.0 - dones[t]
-            delta = rewards[t] + args.gamma * next_value * mask - values[t].detach()
+            delta = (
+                rewards[t]
+                + args.gamma * next_value * mask
+                - values[t].detach()
+            )
             gae = delta + args.gamma * args.gae_lambda * mask * gae
             advantages.append(gae)
             returns.append(gae + values[t].detach())
@@ -191,17 +213,26 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
         policy_loss = -(log_prob_t * advantage_t.detach()).mean()
         value_loss = F.smooth_l1_loss(value_t, return_t.detach())
         entropy_bonus = entropy_t.mean()
-        loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy_bonus
+        loss = (
+            policy_loss
+            + args.value_coef * value_loss
+            - args.entropy_coef * entropy_bonus
+        )
 
-        optimizer.zero_grad(set_to_none=True)
         local_model.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), args.max_grad_norm)
 
-        for shared_param, local_param in zip(shared_model.parameters(), local_model.parameters()):
-            if local_param.grad is not None:
-                shared_param.grad = local_param.grad.detach().clone()
-        optimizer.step()
+        # Keep the critical shared-memory update atomic. Workers remain
+        # asynchronous in environment interaction and rollout computation.
+        with update_lock:
+            optimizer.zero_grad(set_to_none=True)
+            for shared_param, local_param in zip(
+                shared_model.parameters(), local_model.parameters()
+            ):
+                if local_param.grad is not None:
+                    shared_param.grad = local_param.grad.detach().clone()
+            optimizer.step()
 
         if rank == 0 and counter.value % max(args.rollout_steps * 50, 1) < args.rollout_steps:
             elapsed = time.perf_counter() - started
@@ -218,7 +249,11 @@ def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--total-steps", type=int, default=500_000)
-    parser.add_argument("--workers", type=int, default=min(8, max(2, os.cpu_count() or 2)))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, max(2, os.cpu_count() or 2)),
+    )
     parser.add_argument("--rollout-steps", type=int, default=20)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -244,10 +279,14 @@ def main() -> int:
     shared_model.share_memory()
     optimizer = SharedAdam(shared_model.parameters(), lr=args.learning_rate)
     counter = ctx.Value("i", 0)
+    update_lock = ctx.Lock()
 
     processes: list[mp.Process] = []
     for rank in range(args.workers):
-        process = ctx.Process(target=_worker, args=(rank, shared_model, optimizer, counter, args))
+        process = ctx.Process(
+            target=_worker,
+            args=(rank, shared_model, optimizer, counter, update_lock, args),
+        )
         process.start()
         processes.append(process)
 
