@@ -11,8 +11,8 @@
 2. DQN — public score 90,670.62
 3. Neural Network SARSA — public score 113,072.38
 4. A2C — public score 114,047.62
-5. Double DQN — current public score 115,819.00; final portal candidate is the new
-   dueling joint-action Double DQN model with local 200-episode mean cost 111,216.54
+5. Double DQN — best public score 115,819.00; selected final submission uses the
+   standard Double DQN 256-256 MLP implementation.
 
 Lower cost is better.
 
