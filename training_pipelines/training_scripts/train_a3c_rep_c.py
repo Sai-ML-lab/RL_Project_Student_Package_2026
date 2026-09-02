@@ -1,13 +1,12 @@
-"""Lightweight true A3C trainer for the inventory-control project.
+"""Lightweight A3C trainer for the inventory-control project.
 
-This implementation uses multiple independent environment workers, a shared
-actor-critic network in shared memory, and a shared Adam optimizer. Workers
-periodically copy the shared parameters, collect short on-policy rollouts, and
-apply gradients to the shared model. The official environment is unchanged.
+The actor is factorized into three independent 11-way categorical heads (one
+for each product) instead of a single 1331-way head.  This matches the actual
+MultiDiscrete action structure and greatly reduces the policy output space
+while preserving the full joint action space through the product-wise action
+combination.
 
-Actions are represented internally as one categorical variable over all 1331
-joint actions, then decoded back to MultiDiscrete([11,11,11]) indices before
-env.step().
+The official environment, observation, reward, and evaluator remain unchanged.
 """
 from __future__ import annotations
 
@@ -22,10 +21,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from training_pipelines.src.environment.action_codec import (
-    JOINT_ACTION_SIZE,
-    joint_index_to_multidiscrete,
-)
 from training_pipelines.src.features.representation_c import (
     REPRESENTATION_C_DIM,
     flatten_observation_representation_c,
@@ -33,9 +28,14 @@ from training_pipelines.src.features.representation_c import (
 from training_pipelines.training_utils.rep_c_env import make_rep_c_env
 from training_pipelines.training_scripts.common import MODELS_DIR
 
+N_PRODUCTS = 3
+N_ACTIONS_PER_PRODUCT = 11
+
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int = REPRESENTATION_C_DIM, n_actions: int = JOINT_ACTION_SIZE) -> None:
+    """Shared trunk + factorized actor heads + scalar critic."""
+
+    def __init__(self, obs_dim: int = REPRESENTATION_C_DIM) -> None:
         super().__init__()
         self.trunk = nn.Sequential(
             nn.Linear(obs_dim, 128),
@@ -43,12 +43,15 @@ class ActorCritic(nn.Module):
             nn.Linear(128, 128),
             nn.ReLU(),
         )
-        self.actor = nn.Linear(128, n_actions)
+        self.actor_heads = nn.ModuleList(
+            [nn.Linear(128, N_ACTIONS_PER_PRODUCT) for _ in range(N_PRODUCTS)]
+        )
         self.critic = nn.Linear(128, 1)
 
     def forward(self, obs: torch.Tensor):
         h = self.trunk(obs)
-        return self.actor(h), self.critic(h).squeeze(-1)
+        logits = [head(h) for head in self.actor_heads]
+        return logits, self.critic(h).squeeze(-1)
 
 
 class SharedAdam(torch.optim.Adam):
@@ -73,13 +76,16 @@ def _seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def _worker(
-    rank: int,
-    shared_model: ActorCritic,
-    optimizer: SharedAdam,
-    counter,
-    args,
-) -> None:
+def _sample_factorized_action(logits_list: list[torch.Tensor]):
+    distributions = [torch.distributions.Categorical(logits=logits) for logits in logits_list]
+    actions = [dist.sample() for dist in distributions]
+    log_prob = sum(dist.log_prob(action) for dist, action in zip(distributions, actions))
+    entropy = sum(dist.entropy() for dist in distributions)
+    action_indices = [int(action.item()) for action in actions]
+    return action_indices, log_prob.squeeze(), entropy.squeeze()
+
+
+def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter, args) -> None:
     seed = args.seed + 1009 * rank
     _seed_everything(seed)
 
@@ -96,8 +102,8 @@ def _worker(
     local_model.load_state_dict(shared_model.state_dict())
     local_model.train()
 
-    obs, _ = env.reset(seed=seed)
-    obs = flatten_observation_representation_c(obs)
+    raw_obs, _ = env.reset(seed=seed)
+    obs = flatten_observation_representation_c(raw_obs)
     episode_return = 0.0
     episode_steps = 0
     started = time.perf_counter()
@@ -121,20 +127,18 @@ def _worker(
 
         for _ in range(rollout_steps):
             obs_t = torch.from_numpy(obs).float().unsqueeze(0)
-            logits, value = local_model(obs_t)
-            dist = torch.distributions.Categorical(logits=logits)
-            action = dist.sample()
-            action_idx = int(action.item())
-            multi_action = np.asarray(joint_index_to_multidiscrete(action_idx), dtype=np.int64)
+            logits_list, value = local_model(obs_t)
+            action_indices, log_prob, entropy = _sample_factorized_action(logits_list)
+            multi_action = np.asarray(action_indices, dtype=np.int64)
 
-            next_obs, reward, terminated, truncated, _info = env.step(multi_action)
+            next_raw_obs, reward, terminated, truncated, _info = env.step(multi_action)
             done = bool(terminated or truncated)
-            next_obs = flatten_observation_representation_c(next_obs)
+            next_obs = flatten_observation_representation_c(next_raw_obs)
 
             rewards.append(float(reward))
             values.append(value.squeeze(0))
-            log_probs.append(dist.log_prob(action).squeeze(0))
-            entropies.append(dist.entropy().squeeze(0))
+            log_probs.append(log_prob)
+            entropies.append(entropy)
             dones.append(float(done))
 
             episode_return += float(reward)
@@ -142,8 +146,8 @@ def _worker(
             obs = next_obs
 
             if done:
-                obs_raw, _ = env.reset()
-                obs = flatten_observation_representation_c(obs_raw)
+                raw_obs, _ = env.reset()
+                obs = flatten_observation_representation_c(raw_obs)
                 if rank == 0:
                     print(
                         f"[A3C worker {rank}] episode return={episode_return:.2f} steps={episode_steps}",
@@ -189,8 +193,6 @@ def _worker(
         entropy_bonus = entropy_t.mean()
         loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy_bonus
 
-        # Clear any stale gradients on the shared optimizer/model, then apply
-        # the current worker's local gradients to the shared parameters.
         optimizer.zero_grad(set_to_none=True)
         local_model.zero_grad(set_to_none=True)
         loss.backward()
@@ -245,10 +247,7 @@ def main() -> int:
 
     processes: list[mp.Process] = []
     for rank in range(args.workers):
-        process = ctx.Process(
-            target=_worker,
-            args=(rank, shared_model, optimizer, counter, args),
-        )
+        process = ctx.Process(target=_worker, args=(rank, shared_model, optimizer, counter, args))
         process.start()
         processes.append(process)
 
@@ -263,7 +262,8 @@ def main() -> int:
         {
             "state_dict": shared_model.state_dict(),
             "obs_dim": REPRESENTATION_C_DIM,
-            "n_actions": JOINT_ACTION_SIZE,
+            "n_products": N_PRODUCTS,
+            "actions_per_product": N_ACTIONS_PER_PRODUCT,
             "hidden_sizes": [128, 128],
             "total_steps": args.total_steps,
             "workers": args.workers,
@@ -274,6 +274,7 @@ def main() -> int:
             "entropy_coef": args.entropy_coef,
             "value_coef": args.value_coef,
             "seed": args.seed,
+            "action_mode": "factorized_multidiscrete",
         },
         out_dir / "a3c_model.pt",
     )
