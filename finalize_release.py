@@ -53,6 +53,7 @@ KEEP_SRC = {
     "algorithms/common/schedules.py",
     "environment/action_codec.py",
     "environment/wrappers.py",
+    "features/normalizer.py",
     "features/observation.py",
     "features/engineered.py",
     "features/representation_c.py",
@@ -108,7 +109,6 @@ def validate_text_files() -> None:
     for token in ["111,216.54", "111216.54", "114047.62", "Double-DQN pipeline use 76-dimensional", "public score pending"]:
         if token in nb_text:
             fail(f"Stale notebook text detected: {token}")
-
     readme = README.read_text(encoding="utf-8")
     for token in ["A2C + Representation C", "94,660.12", "99,566.57", "V030", "RL_Project_Final.ipynb"]:
         if token not in readme:
@@ -139,14 +139,12 @@ def cleanup() -> None:
     stale = SUBMISSIONS / "a2c_rep_c_candidate_v030"
     if stale.exists():
         shutil.rmtree(stale)
-
     for child in list(TRAINING.iterdir()):
         if child.name not in KEEP_TRAINING_ROOT:
             if child.is_dir():
                 shutil.rmtree(child)
             else:
                 child.unlink()
-
     scripts_dir = TRAINING / "training_scripts"
     for child in list(scripts_dir.iterdir()):
         if child.name not in KEEP_TRAINING_SCRIPTS and child.name != "__init__.py":
@@ -154,11 +152,9 @@ def cleanup() -> None:
                 shutil.rmtree(child)
             else:
                 child.unlink()
-
     for path in [TRAINING / "models", TRAINING / "logs", TRAINING / "eval_results", ROOT / "tuning_results"]:
         if path.exists():
             shutil.rmtree(path)
-
     src = TRAINING / "src"
     for path in sorted(src.rglob("*"), reverse=True):
         if path.is_dir() or path.name == "__init__.py":
@@ -168,7 +164,6 @@ def cleanup() -> None:
     for path in sorted(src.rglob("*"), reverse=True):
         if path.is_dir() and not any(path.iterdir()):
             path.rmdir()
-
     if RESULTS.exists():
         for child in list(RESULTS.iterdir()):
             if child.name not in KEEP_RESULTS:
