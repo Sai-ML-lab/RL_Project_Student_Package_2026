@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,8 @@ KEEP_SCRIPTS = {"common.py", "train_ppo_rep_b_experiment.py", "train_dqn.py", "t
 KEEP_UTILS = {"__init__.py", "rep_c_env.py", "obs_wrapper.py", "action_wrapper.py", "reward_shaping.py", "env_factory.py"}
 KEEP_SOURCE = {"algorithms/neural_sarsa.py", "algorithms/common/checkpoint.py", "algorithms/common/env_factory.py", "algorithms/common/networks.py", "algorithms/common/replay_buffer.py", "algorithms/common/schedules.py", "environment/action_codec.py", "environment/wrappers.py", "features/normalizer.py", "features/observation.py", "features/engineered.py", "features/representation_c.py"}
 KEEP_RESULTS = {"final_results.csv", "ppo_learning_curve.png", "dqn_learning_curve.png", "a2c_learning_curve.png"}
-POLICIES = [SUBMISSIONS / n / "policy.py" for n in ("ppo", "dqn", "neural_sarsa", "a2c", "double_dqn")]
+POLICY_DIRS = ("ppo", "dqn", "neural_sarsa", "a2c", "double_dqn")
+POLICIES = [SUBMISSIONS / n / "policy.py" for n in POLICY_DIRS]
 ARTIFACTS = [SUBMISSIONS / "ppo" / "model.zip", SUBMISSIONS / "dqn" / "model.zip", SUBMISSIONS / "neural_sarsa" / "policy_state.pt", SUBMISSIONS / "a2c" / "model.zip", SUBMISSIONS / "double_dqn" / "model.zip"]
 FINAL = {
     "ppo": {"policy": "policy.py", "model": "model.zip", "technique": {"PPO"}, "dim": 76, "budget": 500000},
@@ -37,12 +39,15 @@ FINAL = {
 }
 ROOT_EXPERIMENTAL = {"evaluate_neural_sarsa_official.py", "evaluate_neural_sarsa_top_candidates.py", "run_ddqn_portfolio_screen.py", "run_double_dqn_portfolio_screen.py", "run_neural_sarsa_final_refinement.py", "run_neural_sarsa_long_s2.py", "run_neural_sarsa_portfolio_screen.py", "run_neural_sarsa_promote_v2.py", "run_neural_sarsa_r2_official_holdout.py", "run_neural_sarsa_screening_v2.py"}
 
+
 def fail(msg: str) -> None:
     raise RuntimeError(msg)
+
 
 def run(cmd: list[str]) -> None:
     print("$", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
+
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -51,12 +56,14 @@ def sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+
 def valid_zip(path: Path) -> bool:
     try:
         with zipfile.ZipFile(path) as zf:
             return zf.testzip() is None
     except (OSError, zipfile.BadZipFile):
         return False
+
 
 def validate_inputs() -> None:
     if not CONFIG.exists():
@@ -70,6 +77,7 @@ def validate_inputs() -> None:
         fail("Missing required finalization inputs: " + ", ".join(missing))
     print("OK assigned configuration")
     print("OK required finalization inputs")
+
 
 def copy_a2c() -> None:
     if A2C_SOURCE.exists():
@@ -86,11 +94,14 @@ def copy_a2c() -> None:
     else:
         fail(f"Missing A2C source and final model: {A2C_SOURCE.relative_to(ROOT)} / {A2C_TARGET.relative_to(ROOT)}")
 
+
 def metadata_technique(meta: dict) -> str | None:
     return meta.get("technique") or meta.get("technique_category")
 
+
 def metadata_representation(meta: dict) -> str:
     return str(meta.get("representation") or meta.get("observation_representation") or "")
+
 
 def metadata_dimension(meta: dict, rep: str) -> int | None:
     value = meta.get("observation_dimension")
@@ -99,9 +110,11 @@ def metadata_dimension(meta: dict, rep: str) -> int | None:
     match = re.search(r"(\d{2,3})[- ]?(?:dim|dimension)", rep, flags=re.IGNORECASE)
     return int(match.group(1)) if match else None
 
+
 def metadata_budget(meta: dict) -> int | None:
     candidates = [meta.get("training_transitions"), meta.get("main_hyperparameters", {}).get("total_timesteps"), meta.get("main_hyperparameters", {}).get("total_transitions"), meta.get("hyperparameters", {}).get("total_timesteps")]
     return next((x for x in candidates if isinstance(x, int)), None)
+
 
 def validate_documents() -> None:
     nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
@@ -126,6 +139,7 @@ def validate_documents() -> None:
             fail(f"Stale README text detected: {token}")
     print("OK notebook and README checks")
 
+
 def validate_metadata() -> None:
     for folder, spec in FINAL.items():
         base = SUBMISSIONS / folder
@@ -149,6 +163,7 @@ def validate_metadata() -> None:
             fail(f"Wrong training budget for {folder}: {metadata_budget(meta)!r}; expected {budget}")
     print("OK final submission layout and metadata")
 
+
 def compile_paths(paths: list[Path], label: str) -> None:
     missing = [str(p.relative_to(ROOT)) for p in paths if not p.exists()]
     if missing:
@@ -157,12 +172,14 @@ def compile_paths(paths: list[Path], label: str) -> None:
         run([sys.executable, "-m", "py_compile", str(path)])
     print(f"OK {label}")
 
+
 def validate_pre_cleanup_code() -> None:
     paths = POLICIES[:]
     paths += [TRAINING / "src" / rel for rel in KEEP_SOURCE]
     paths += [TRAINING / "training_scripts" / name for name in KEEP_SCRIPTS]
     paths += [TRAINING / "training_utils" / name for name in KEEP_UTILS]
     compile_paths(paths, "retained Python files compile before cleanup")
+
 
 def cleanup() -> None:
     for name in ["models", "logs", "eval_results", "tuning_results"]:
@@ -212,6 +229,7 @@ def cleanup() -> None:
                 shutil.rmtree(cache)
     print("OK cleanup completed")
 
+
 def validate_tree() -> None:
     expected_top = {"assigned_config.json", "src", "training_scripts", "training_utils"}
     actual_top = {p.name for p in TRAINING.iterdir()}
@@ -222,22 +240,35 @@ def validate_tree() -> None:
             fail(f"Required final directory missing: {d.relative_to(ROOT)}")
     print("OK final training tree")
 
+
 def validate_policies() -> None:
     for policy in POLICIES:
         run([sys.executable, "policy_validation_tests.py", str(policy.relative_to(ROOT)), "--max-seconds-per-call", "0.25"])
     print("OK course-supplied policy validator")
 
+
 def validate_holdout() -> None:
+    """Run the official evaluator against the actual submitted run_policy callables.
+
+    evaluation.evaluate_policy accepts a callable as its first positional argument;
+    it does not accept a policy_path keyword. Each submission module is executed once
+    with runpy and its run_policy function is passed to the official evaluator.
+    """
     script = ROOT / ".final_holdout_validation_tmp.py"
     script.write_text(
-        "from evaluation import evaluate_policy, summarise_overall\n"
+        "from evaluation import evaluate_policy, summarise_overall, HOLDOUT_SEEDS, SCENARIO_MODES\n"
+        "import runpy\n"
         "from pathlib import Path\n"
         "policies=[Path('submissions/ppo/policy.py'),Path('submissions/dqn/policy.py'),Path('submissions/neural_sarsa/policy.py'),Path('submissions/a2c/policy.py'),Path('submissions/double_dqn/policy.py')]\n"
         "for p in policies:\n"
         " print(f'=== HOLDOUT {p.parent.name} ===')\n"
-        " r=evaluate_policy(policy_path=p,seeds=range(900,940),scenario_modes=['stationary','seasonal','trend','shock','random'])\n"
-        " s=summarise_overall(r); print(s)\n"
-        " assert int(s['n_episodes']) == 200, s\n"
+        " ns=runpy.run_path(str(p))\n"
+        " fn=ns.get('run_policy')\n"
+        " if not callable(fn): raise SystemExit(f'Missing callable run_policy in {p}')\n"
+        " r,summ=evaluate_policy(fn,seeds=HOLDOUT_SEEDS,scenario_modes=SCENARIO_MODES)\n"
+        " s=summarise_overall(r)\n"
+        " print(s)\n"
+        " if int(s['n_episodes']) != 200: raise SystemExit(f'Expected 200 episodes for {p}, got {s[\"n_episodes\"]}')\n"
         "print('FULL_HOLDOUT_OK')\n",
         encoding="utf-8",
     )
@@ -247,6 +278,7 @@ def validate_holdout() -> None:
         script.unlink(missing_ok=True)
     print("OK full 200-episode holdout for all five policies")
 
+
 def main() -> int:
     print("=== IITM RL final release ===")
     validate_inputs()
@@ -255,6 +287,7 @@ def main() -> int:
     validate_metadata()
     pre = POLICIES[:] + [TRAINING / "src" / rel for rel in KEEP_SOURCE] + [TRAINING / "training_scripts" / name for name in KEEP_SCRIPTS] + [TRAINING / "training_utils" / name for name in KEEP_UTILS]
     compile_paths(pre, "retained Python files compile before cleanup")
+    validate_pre_cleanup_code()
     cleanup()
     validate_tree()
     post = POLICIES[:] + [TRAINING / "src" / rel for rel in KEEP_SOURCE] + [TRAINING / "training_scripts" / name for name in KEEP_SCRIPTS] + [TRAINING / "training_utils" / name for name in KEEP_UTILS]
@@ -268,6 +301,7 @@ def main() -> int:
     except OSError:
         pass
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
