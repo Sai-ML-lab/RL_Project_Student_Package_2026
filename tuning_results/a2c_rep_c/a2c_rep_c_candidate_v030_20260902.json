@@ -1,5 +1,5 @@
 {
-  "status": "pending_public_score",
+  "status": "public_validated_pending_multiseed_promotion",
   "method": "A2C",
   "representation": "C",
   "variant": "V030",
@@ -9,6 +9,16 @@
     "std_cost": 7961.56,
     "median_cost": 92897.50,
     "mean_service_level": 0.994717
+  },
+  "public_score": {
+    "episodes": 20,
+    "mean_cost": 94660.12,
+    "status": "SUCCESS",
+    "submitted_at": "2026-09-02T11:07:16"
+  },
+  "public_vs_holdout": {
+    "absolute_difference": 479.26,
+    "relative_difference": 0.005089
   },
   "scenario_mean_cost": {
     "random": 94911.875,
@@ -31,5 +41,5 @@
     "local_improvement": 20488.24,
     "relative_improvement": 0.178656
   },
-  "promotion_policy": "Do not replace protected main A2C until the public score is available and multi-seed robustness is confirmed."
+  "promotion_policy": "Keep protected main A2C unchanged until multi-seed robustness is confirmed; public result is now validated as a strong candidate."
 }
