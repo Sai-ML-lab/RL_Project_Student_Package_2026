@@ -1,47 +1,45 @@
 # IITM RL Course Project 2026 — Final Release
 
-**Course:** IITM Web M.Tech Program, Course ID 6002W
-**Project:** Industrial Inventory Control using Reinforcement Learning
-**Roll number:** DA25M579
+**Course:** IITM Web M.Tech Program, Course ID 6002W  
+**Project:** Industrial Inventory Control using Reinforcement Learning  
+**Roll number:** DA25M579  
 **Assigned variant:** V030
 
 ## Final five techniques
 
-1. PPO + Representation B — public score 83,610.75
-2. DQN — public score 90,670.62
-3. Neural Network SARSA — public score 113,072.38
-4. A2C — public score 114,047.62
-5. Double DQN — best public score 115,819.00; selected final submission uses the
-   standard Double DQN 256-256 MLP implementation.
+| Technique | Public mean cost |
+|---|---:|
+| PPO + Representation B | 83,610.75 |
+| DQN | 90,670.62 |
+| A2C + Representation C | 94,660.12 |
+| Neural Network SARSA | 113,072.38 |
+| Double DQN | 115,819.00 |
 
+**Final public Top-5 average: 99,566.57**  
 Lower cost is better.
 
-## Final project contents
+## Final submission package
 
 - `industrial_inventory_env/` — supplied official environment
-- `training_pipelines/` — only the source/launchers needed to reproduce the final five
-- `submissions/` — five frozen policy + model artifact directories
-- `portal_uploads/` — five upload-ready policy packages
-- `RL_Project_Final.ipynb` — final notebook covering course-required reproducibility/evidence
+- `submissions/` — five frozen policy files and model artifacts
+- `RL_Project_Final.ipynb` — final course notebook covering reproducibility, validation and results
 - `Project_Report_DA25M579_V030.docx` — concise final report
+- `starter_notebook.ipynb` — professor-provided starter material, retained unchanged
+- `requirements.txt` — permitted package versions
 - `evaluation.py` — local official-cost evaluation harness
-- `policy_validation_tests.py` — supplied policy-interface validator
-- `COURSE_COMPLIANCE_CHECKLIST.md` — final requirements checklist
-- `EXPERIMENT_HISTORY.md` — text-only record of material rejected experiments
+- `policy_validation_tests.py` — course-supplied policy-interface validator
+- `training_pipelines/` — source and launchers required to reproduce the final techniques
 
-## Validation
+## Final A2C replacement
 
-The custom Neural Network SARSA and Double DQN policies were runtime-validated in this
-release environment. All five final policy files were also statically checked for the required
-`run_policy(observation)` interface, valid model artifact paths, and absence of direct
-`env.step()`/`env.reset()` calls. PPO/DQN/A2C runtime imports require the same Python environment
-used on the student's Mac because Stable-Baselines3 is not installed in the artifact-building
-container.
+The protected A2C artifact was replaced by the Representation C candidate. Its official 200-episode holdout mean was 94,180.86 with mean service 0.994717, followed by a public score of 94,660.12. The final policy is `submissions/a2c/policy.py` and loads `submissions/a2c/model.zip`.
 
-Before portal upload, run the course-supplied validator locally against all five policy files.
+## Validation requirements
 
-## Important course note
+Before submission, run the course-supplied validator against all five final policy files. The validator checks importability, the exact `run_policy(observation)` interface, valid actions, deterministic inference, observation immutability, prohibited direct environment calls, and local inference-time limits.
 
-The professor-provided `starter_notebook.ipynb` is retained in the final repository unchanged as supplied course material. It provides the approved configuration-generation workflow for the assigned V030 variant; the resulting configuration is frozen in `training_pipelines/assigned_config.json`.
+The policy contract is inference-only: no training, environment stepping/resetting, internet access, future demand, scenario identity or hidden parameters are used by `run_policy()`.
 
-The final code tree intentionally excludes failed/stale exploratory checkpoints and scripts. Their material outcomes are documented in the final notebook/report rather than retained as executable experiment artifacts.
+## Reproducibility and cleanup
+
+The official environment, official cost function and leaderboard evaluator are unchanged. The assigned V030 configuration is frozen in `training_pipelines/assigned_config.json`. Failed exploratory checkpoints and stale tuning artifacts are not part of the final deliverable; their material outcomes are summarized in the final notebook/report where relevant.
