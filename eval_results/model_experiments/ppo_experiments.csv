@@ -1,5 +1,0 @@
-experiment_id,algorithm,learning_rate,ent_coef,timesteps,screen_mean_cost,screen_std_cost,screen_service,holdout_mean_cost,holdout_std_cost,holdout_service,status
-ppo_001,PPO,0.0003,0.0,500000,155047.0,22853.053557189138,0.9429076789141287,,,rejected
-ppo_002,PPO,0.0003,0.0,1500000,90404.6,10634.359591360795,0.989998977414893,,,,rejected_after_holdout
-ppo_002_holdout,PPO,0.0003,0.0,1500000,,,,92568.0,11450.66,0.989606,rejected
-ppo_baseline,PPO,0.0003,0.0,1500000,,,,91469.9,11667.938477148937,0.9876409,baseline

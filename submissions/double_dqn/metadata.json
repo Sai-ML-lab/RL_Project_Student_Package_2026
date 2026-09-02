@@ -1,0 +1,32 @@
+{
+  "technique_category": "Double DQN",
+  "architecture": "Dueling 256-256 joint-action Q-network with Double-DQN target estimation",
+  "policy_file": "policy.py",
+  "model_artifact": "policy_state.pt",
+  "observation_representation": "76-dim Representation B: 38 normalized raw observation features + 38 engineered features derived only from the documented observation",
+  "action_space": "Full joint 1331-action space using base-11 encoding; run_policy returns quantities in {0,10,...,100}",
+  "training_reward": "Official base reward plus ShapedReward during training; leaderboard/local reported metrics are computed from the unshaped environment cost",
+  "hyperparameters": {
+    "learning_rate": 0.0005,
+    "gamma": 0.98,
+    "buffer_size": 200000,
+    "learning_starts": 5000,
+    "batch_size": 256,
+    "train_frequency": 4,
+    "gradient_steps": 1,
+    "target_update_interval": 2000,
+    "exploration_fraction": 0.3,
+    "exploration_final_eps": 0.02,
+    "max_grad_norm": 10.0,
+    "total_timesteps": 100000,
+    "seed": 20260727
+  },
+  "local_holdout": {
+    "episodes": 200,
+    "mean_cost": 111216.5375,
+    "std_cost": 14914.339365132317,
+    "median_cost": 108951.25,
+    "mean_service_level": 0.9803396712575086
+  },
+  "status": "final_candidate_for_last_Double_DQN_portal_submission"
+}
