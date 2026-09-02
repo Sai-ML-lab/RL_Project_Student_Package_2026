@@ -1,9 +1,12 @@
-name: Quick Improvements Smoke Test
+name: Final Release Smoke Test
 
 on:
   push:
     branches:
       - quick-improvements-a3c-tuning
+  pull_request:
+    branches:
+      - main
 
 jobs:
   smoke:
@@ -20,36 +23,77 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
 
       - name: Compile all Python files
         run: python -m compileall -q .
 
-      - name: Run existing and new feature tests
-        run: pytest -q training_pipelines/tests
+      - name: Verify final submission artifacts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          import json
 
-      - name: End-to-end smoke imports and environment rollout
+          checks = {
+              "ppo": ("model.zip", True),
+              "dqn": ("model.zip", True),
+              "a2c": ("model.zip", True),
+              "double_dqn": ("model.zip", True),
+              "neural_sarsa": ("policy_state.pt", False),
+          }
+
+          for name, (artifact, is_zip) in checks.items():
+              d = Path("submissions") / name
+              assert (d / "policy.py").is_file(), f"{name}: policy.py missing"
+              assert (d / "metadata.json").is_file(), f"{name}: metadata.json missing"
+              assert (d / artifact).is_file(), f"{name}: {artifact} missing"
+
+              metadata = json.loads((d / "metadata.json").read_text())
+              assert metadata.get("policy_file") == "policy.py"
+              assert metadata.get("model_artifact") == artifact
+
+              if is_zip:
+                  with zipfile.ZipFile(d / artifact) as zf:
+                      assert zf.testzip() is None, f"{name}: corrupt ZIP"
+
+              print(f"PASS: {name}")
+
+          assert not Path("finalize_release.py").exists()
+          assert not Path("submissions/a2c_rep_c_candidate_v030").exists()
+          assert not Path("results/raw_training_curves").exists()
+          print("FINAL ARTIFACT CHECK PASS")
+          PY
+
+      - name: Run course policy validator
+        run: |
+          python policy_validation_tests.py submissions/ppo/policy.py
+          python policy_validation_tests.py submissions/dqn/policy.py
+          python policy_validation_tests.py submissions/neural_sarsa/policy.py
+          python policy_validation_tests.py submissions/a2c/policy.py
+          python policy_validation_tests.py submissions/double_dqn/policy.py
+
+      - name: Smoke test retained training interfaces
         run: |
           python - <<'PY'
           import numpy as np
           import torch
           from stable_baselines3 import DQN, PPO
+          from industrial_inventory_env import IndustrialInventoryEnv
           from training_pipelines.src.features.representation_c import (
               REPRESENTATION_C_DIM,
               flatten_observation_representation_c,
           )
           from training_pipelines.training_utils.rep_c_env import make_rep_c_env
-          from training_pipelines.training_scripts.train_double_dqn_rep_c import DoubleDQN
-          from training_pipelines.training_scripts.train_a3c_rep_c import ActorCritic
-          from industrial_inventory_env import IndustrialInventoryEnv
-          from training_pipelines.training_utils.env_factory import load_assigned_config
+          from training_pipelines.training_scripts.train_double_dqn_experiment import DoubleDQN
+          from training_pipelines.training_scripts.train_a2c_rep_c import ActorCritic
 
           assert REPRESENTATION_C_DIM == 99
+
           env = make_rep_c_env(
               flatten_action=False,
               shaping=False,
               seed=900,
-              scenario_mode='stationary',
+              scenario_mode="stationary",
               domain_randomization=False,
           )
           obs, _ = env.reset(seed=900)
@@ -57,30 +101,68 @@ jobs:
           assert obs.dtype == np.float32
           assert np.isfinite(obs).all()
           for _ in range(3):
-              obs, reward, terminated, truncated, info = env.step(np.array([0, 0, 0], dtype=np.int64))
+              obs, reward, terminated, truncated, info = env.step(
+                  np.array([0, 0, 0], dtype=np.int64)
+              )
               assert np.isfinite(reward)
-              assert len(info['order_quantities']) == 3
+              assert len(info["order_quantities"]) == 3
+              if terminated or truncated:
+                  break
           env.close()
 
-          # Verify model constructors against the feature/action interfaces.
+          # Smoke-test the retained DQN interface with a tiny CPU-only run.
           dqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=901)
-          dqn = DQN('MlpPolicy', dqn_env, policy_kwargs={'net_arch':[32,32]}, learning_starts=1, buffer_size=32, batch_size=8, device='cpu', seed=1)
+          dqn = DQN(
+              "MlpPolicy",
+              dqn_env,
+              policy_kwargs={"net_arch": [32, 32]},
+              learning_starts=1,
+              buffer_size=32,
+              batch_size=8,
+              device="cpu",
+              seed=1,
+          )
           dqn.learn(total_timesteps=16)
           dqn_env.close()
 
+          # Smoke-test the retained Double DQN interface with a tiny run.
           ddqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=902)
-          ddqn = DoubleDQN('MlpPolicy', ddqn_env, policy_kwargs={'net_arch':[32,32]}, learning_starts=1, buffer_size=32, batch_size=8, device='cpu', seed=2)
+          ddqn = DoubleDQN(
+              "MlpPolicy",
+              ddqn_env,
+              policy_kwargs={"net_arch": [32, 32]},
+              learning_starts=1,
+              buffer_size=32,
+              batch_size=8,
+              device="cpu",
+              seed=2,
+          )
           ddqn.learn(total_timesteps=16)
           ddqn_env.close()
 
+          # Smoke-test the retained PPO environment interface.
           ppo_env = make_rep_c_env(flatten_action=False, shaping=False, seed=903)
-          ppo = PPO('MlpPolicy', ppo_env, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs={'net_arch':[32,32]}, device='cpu', seed=3)
+          ppo = PPO(
+              "MlpPolicy",
+              ppo_env,
+              n_steps=8,
+              batch_size=8,
+              n_epochs=1,
+              policy_kwargs={"net_arch": [32, 32]},
+              device="cpu",
+              seed=3,
+          )
           ppo.learn(total_timesteps=16)
           ppo_env.close()
 
+          # Smoke-test the retained A2C actor-critic interface.
           ac = ActorCritic()
-          logits, value = ac(torch.zeros((1, REPRESENTATION_C_DIM), dtype=torch.float32))
-          assert len(logits) == 3 and all(x.shape == (1, 11) for x in logits)
+          logits, value = ac(
+              torch.zeros((1, REPRESENTATION_C_DIM), dtype=torch.float32)
+          )
+          assert len(logits) == 3
+          assert all(x.shape == (1, 11) for x in logits)
           assert value.shape == (1,)
-          print('SMOKE PASS')
+
+          print("RETAINED TRAINING INTERFACE SMOKE PASS")
           PY
