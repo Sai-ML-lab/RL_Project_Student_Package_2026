@@ -14,3 +14,9 @@ env/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Local training artifacts (not part of final submission package)
+training_pipelines/models/
+training_pipelines/logs/
+training_pipelines/eval_results/
+tuning_results/
