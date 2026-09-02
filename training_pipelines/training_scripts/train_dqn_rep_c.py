@@ -1,13 +1,13 @@
-"""DQN experiment using the 99-D Representation C.
-
-This script deliberately exposes only the high-value DQN hyperparameters so it
-can be driven by a small screening loop.  Existing frozen DQN artifacts are
-never touched.
-"""
+"""DQN experiment using the 99-D Representation C."""
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import EvalCallback
@@ -15,7 +15,6 @@ from stable_baselines3.common.callbacks import EvalCallback
 from training_pipelines.src.features.representation_c import REPRESENTATION_C_DIM
 from training_pipelines.training_utils.rep_c_env import build_rep_c_vec_env
 from training_pipelines.training_scripts.common import MODELS_DIR
-
 
 DEFAULT_SEED = 20260902
 
@@ -37,9 +36,15 @@ def main() -> int:
     parser.add_argument("--run-name", type=str, default=None)
     args = parser.parse_args()
 
+    if args.timesteps < 1:
+        raise ValueError("timesteps must be positive")
+    if args.batch_size < 1 or args.buffer_size < args.batch_size:
+        raise ValueError("batch-size must be positive and <= buffer-size")
+    if args.learning_starts < 0:
+        raise ValueError("learning-starts must be >= 0")
+
     run_name = args.run_name or (
-        f"dqn_rep_c_{args.timesteps // 1000}k_"
-        f"lr{args.learning_rate:.0e}_g{args.gamma}_seed{args.seed}"
+        f"dqn_rep_c_{args.timesteps // 1000}k_lr{args.learning_rate:.0e}_g{args.gamma}_seed{args.seed}"
     )
     save_dir = MODELS_DIR / "dqn_rep_c_experiments" / run_name
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -91,20 +96,17 @@ def main() -> int:
     )
 
     print(
-        "DQN Rep-C configuration: "
-        f"dim={REPRESENTATION_C_DIM}, timesteps={args.timesteps}, "
-        f"lr={args.learning_rate}, gamma={args.gamma}, "
-        f"target={args.target_update_interval}, eps={args.exploration_final_eps}",
+        f"DQN Rep-C configuration: dim={REPRESENTATION_C_DIM}, timesteps={args.timesteps}, "
+        f"lr={args.learning_rate}, gamma={args.gamma}, target={args.target_update_interval}, "
+        f"eps={args.exploration_final_eps}",
         flush=True,
     )
-
     try:
         model.learn(total_timesteps=args.timesteps, callback=callback)
         model.save(str(save_dir / "final_model"))
     finally:
         train_env.close()
         eval_env.close()
-
     print(f"Saved DQN Rep-C run to: {save_dir}")
     return 0
 
