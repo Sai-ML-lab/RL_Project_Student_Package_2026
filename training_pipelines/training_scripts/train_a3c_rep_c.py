@@ -1,21 +1,18 @@
-"""Lightweight A3C trainer for the inventory-control project.
-
-The actor is factorized into three independent 11-way categorical heads (one
-for each product) instead of a single 1331-way head. This matches the actual
-MultiDiscrete action structure and greatly reduces the policy output space.
-Workers collect rollouts concurrently; shared-parameter updates are protected
-by a short process lock so gradients from concurrent workers cannot overwrite
-one another during the optimizer step.
-
-The official environment, observation, reward, and evaluator remain unchanged.
-"""
+"""A3C trainer for the inventory-control project."""
 from __future__ import annotations
 
 import argparse
 import multiprocessing as mp
 import os
 import random
+import sys
 import time
+from pathlib import Path
+
+# Make repository-root package imports work both as a module and as a file.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
@@ -75,26 +72,25 @@ def _seed_everything(seed: int) -> None:
 
 
 def _sample_factorized_action(logits_list: list[torch.Tensor]):
-    distributions = [
-        torch.distributions.Categorical(logits=logits) for logits in logits_list
-    ]
+    distributions = [torch.distributions.Categorical(logits=logits) for logits in logits_list]
     actions = [dist.sample() for dist in distributions]
-    log_prob = sum(
-        dist.log_prob(action) for dist, action in zip(distributions, actions)
-    )
+    log_prob = sum(dist.log_prob(action) for dist, action in zip(distributions, actions))
     entropy = sum(dist.entropy() for dist in distributions)
     action_indices = [int(action.item()) for action in actions]
     return action_indices, log_prob.squeeze(), entropy.squeeze()
 
 
-def _worker(
-    rank: int,
-    shared_model: ActorCritic,
-    optimizer: SharedAdam,
-    counter,
-    update_lock,
-    args,
-) -> None:
+def _validate_obs(obs: np.ndarray, where: str) -> np.ndarray:
+    obs = np.asarray(obs, dtype=np.float32)
+    if obs.shape != (REPRESENTATION_C_DIM,) or not np.isfinite(obs).all():
+        raise RuntimeError(
+            f"Unexpected Rep-C observation {where}: shape={obs.shape}, "
+            f"finite={np.isfinite(obs).all()}"
+        )
+    return obs
+
+
+def _worker(rank: int, shared_model: ActorCritic, optimizer: SharedAdam, counter, update_lock, args) -> None:
     seed = args.seed + 1009 * rank
     _seed_everything(seed)
 
@@ -102,9 +98,7 @@ def _worker(
         flatten_action=False,
         shaping=args.shaping,
         seed=seed,
-        shaping_kwargs={
-            "anneal_steps": max(1, args.total_steps // max(1, args.workers))
-        },
+        shaping_kwargs={"anneal_steps": max(1, args.total_steps // max(1, args.workers))},
         scenario_mode="random",
         domain_randomization=True,
     )
@@ -113,15 +107,8 @@ def _worker(
     local_model.load_state_dict(shared_model.state_dict())
     local_model.train()
 
-    # make_rep_c_env already applies RepresentationCObsWrapper, so reset/step
-    # return the final 99-D float32 numpy observation directly. Do not flatten
-    # it again; flatten_observation_representation_c expects the raw dict form.
     obs, _ = env.reset(seed=seed)
-    obs = np.asarray(obs, dtype=np.float32)
-    if obs.shape != (REPRESENTATION_C_DIM,) or not np.isfinite(obs).all():
-        raise RuntimeError(
-            f"Unexpected Rep-C observation: shape={obs.shape}, finite={np.isfinite(obs).all()}"
-        )
+    obs = _validate_obs(obs, "after reset")
 
     episode_return = 0.0
     episode_steps = 0
@@ -136,7 +123,6 @@ def _worker(
             counter.value += rollout_steps
 
         local_model.load_state_dict(shared_model.state_dict())
-
         rewards: list[float] = []
         values: list[torch.Tensor] = []
         log_probs: list[torch.Tensor] = []
@@ -151,32 +137,22 @@ def _worker(
 
             next_obs, reward, terminated, truncated, _info = env.step(multi_action)
             done = bool(terminated or truncated)
-            next_obs = np.asarray(next_obs, dtype=np.float32)
-            if next_obs.shape != (REPRESENTATION_C_DIM,) or not np.isfinite(next_obs).all():
-                raise RuntimeError(
-                    f"Unexpected Rep-C observation after step: shape={next_obs.shape}, "
-                    f"finite={np.isfinite(next_obs).all()}"
-                )
+            next_obs = _validate_obs(next_obs, "after step")
 
             rewards.append(float(reward))
             values.append(value.squeeze(0))
             log_probs.append(log_prob)
             entropies.append(entropy)
             dones.append(float(done))
-
             episode_return += float(reward)
             episode_steps += 1
             obs = next_obs
 
             if done:
                 obs, _ = env.reset()
-                obs = np.asarray(obs, dtype=np.float32)
+                obs = _validate_obs(obs, "after episode reset")
                 if rank == 0:
-                    print(
-                        f"[A3C worker {rank}] episode return={episode_return:.2f} "
-                        f"steps={episode_steps}",
-                        flush=True,
-                    )
+                    print(f"[A3C worker {rank}] episode return={episode_return:.2f} steps={episode_steps}", flush=True)
                 episode_return = 0.0
                 episode_steps = 0
 
@@ -184,9 +160,7 @@ def _worker(
             if dones[-1]:
                 next_value = torch.tensor(0.0)
             else:
-                _, next_value_batch = local_model(
-                    torch.from_numpy(obs).float().unsqueeze(0)
-                )
+                _, next_value_batch = local_model(torch.from_numpy(obs).float().unsqueeze(0))
                 next_value = next_value_batch.squeeze(0).detach()
 
         returns: list[torch.Tensor] = []
@@ -194,11 +168,7 @@ def _worker(
         gae = torch.tensor(0.0)
         for t in reversed(range(rollout_steps)):
             mask = 1.0 - dones[t]
-            delta = (
-                rewards[t]
-                + args.gamma * next_value * mask
-                - values[t].detach()
-            )
+            delta = rewards[t] + args.gamma * next_value * mask - values[t].detach()
             gae = delta + args.gamma * args.gae_lambda * mask * gae
             advantages.append(gae)
             returns.append(gae + values[t].detach())
@@ -206,7 +176,6 @@ def _worker(
 
         advantages.reverse()
         returns.reverse()
-
         advantage_t = torch.stack(advantages)
         return_t = torch.stack(returns)
         value_t = torch.stack(values)
@@ -214,18 +183,11 @@ def _worker(
         entropy_t = torch.stack(entropies)
 
         if args.normalize_advantage and advantage_t.numel() > 1:
-            advantage_t = (advantage_t - advantage_t.mean()) / (
-                advantage_t.std(unbiased=False) + 1e-8
-            )
+            advantage_t = (advantage_t - advantage_t.mean()) / (advantage_t.std(unbiased=False) + 1e-8)
 
         policy_loss = -(log_prob_t * advantage_t.detach()).mean()
         value_loss = F.smooth_l1_loss(value_t, return_t.detach())
-        entropy_bonus = entropy_t.mean()
-        loss = (
-            policy_loss
-            + args.value_coef * value_loss
-            - args.entropy_coef * entropy_bonus
-        )
+        loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy_t.mean()
 
         local_model.zero_grad(set_to_none=True)
         loss.backward()
@@ -233,9 +195,7 @@ def _worker(
 
         with update_lock:
             optimizer.zero_grad(set_to_none=True)
-            for shared_param, local_param in zip(
-                shared_model.parameters(), local_model.parameters()
-            ):
+            for shared_param, local_param in zip(shared_model.parameters(), local_model.parameters()):
                 if local_param.grad is not None:
                     shared_param.grad = local_param.grad.detach().clone()
             optimizer.step()
@@ -244,8 +204,7 @@ def _worker(
             elapsed = time.perf_counter() - started
             print(
                 f"[A3C] global_steps={counter.value:,}/{args.total_steps:,} "
-                f"fps={counter.value / max(elapsed, 1e-6):.1f} "
-                f"loss={float(loss.item()):.4f}",
+                f"fps={counter.value / max(elapsed, 1e-6):.1f} loss={float(loss.item()):.4f}",
                 flush=True,
             )
 
@@ -255,11 +214,7 @@ def _worker(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--total-steps", type=int, default=500_000)
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=min(8, max(2, os.cpu_count() or 2)),
-    )
+    parser.add_argument("--workers", type=int, default=min(8, max(2, os.cpu_count() or 2)))
     parser.add_argument("--rollout-steps", type=int, default=20)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -277,10 +232,9 @@ def main() -> int:
         raise ValueError("total-steps, workers and rollout-steps must be positive")
     if args.learning_rate <= 0:
         raise ValueError("learning-rate must be > 0")
-
     args.shaping = not args.no_shaping
-    ctx = mp.get_context("spawn")
 
+    ctx = mp.get_context("spawn")
     shared_model = ActorCritic()
     shared_model.share_memory()
     optimizer = SharedAdam(shared_model.parameters(), lr=args.learning_rate)
@@ -289,10 +243,7 @@ def main() -> int:
 
     processes: list[mp.Process] = []
     for rank in range(args.workers):
-        process = ctx.Process(
-            target=_worker,
-            args=(rank, shared_model, optimizer, counter, update_lock, args),
-        )
+        process = ctx.Process(target=_worker, args=(rank, shared_model, optimizer, counter, update_lock, args))
         process.start()
         processes.append(process)
 
