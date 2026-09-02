@@ -1,6 +1,6 @@
 technique,implementation,public_score,public_status,local_mean_cost,local_std_cost,local_service_level,decision
-PPO,PPO + Representation B,83610.75,public leaderboard,83039.2,9777.14,0.992973,Final candidate; strongest result
+PPO,PPO + Representation B,83610.75,public leaderboard,83039.2,9777.14,0.992973,Retained; strongest public result
 DQN,DQN,90670.62,public leaderboard,96871.3,11858.0,0.988895,Retained
-Neural SARSA,Neural Network SARSA,113072.38,public leaderboard,111730.6,9941.0,0.992882,Retained; better than seed26 public 115082.25
-A2C,A2C,114047.62,public leaderboard,114669.1,24492.0,0.969282,Retained
-Double DQN,Double DQN (256-256 MLP),115819.0,public leaderboard,,,,Selected; best Double DQN submission
+Neural SARSA,Neural Network SARSA,113072.38,public leaderboard,111730.6,9941.0,0.992882,Retained; final SARSA refinement rejected at 117164.21 official holdout
+A2C,A2C + Representation C,94660.12,public leaderboard,94180.86,7961.56,0.994717,Final replacement; submitted Rep-C candidate
+Double DQN,Double DQN (256-256 MLP),115819.0,public leaderboard,,,,Retained; targeted tuning rejected
