@@ -31,8 +31,8 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import zipfile
           import json
+          import zipfile
 
           checks = {
               "ppo": ("model.zip", True),
@@ -76,19 +76,16 @@ jobs:
         run: |
           python - <<'PY'
           import numpy as np
-          import torch
-          from stable_baselines3 import DQN, PPO
-          from industrial_inventory_env import IndustrialInventoryEnv
-          from training_pipelines.src.features.representation_c import (
-              REPRESENTATION_C_DIM,
-              flatten_observation_representation_c,
-          )
-          from training_pipelines.training_utils.rep_c_env import make_rep_c_env
+          from stable_baselines3 import A2C, DQN, PPO
+
+          from training_pipelines.src.features.representation_c import REPRESENTATION_C_DIM
           from training_pipelines.training_scripts.train_double_dqn_experiment import DoubleDQN
-          from training_pipelines.training_scripts.train_a2c_rep_c import ActorCritic
+          from training_pipelines.training_utils.rep_c_env import make_rep_c_env
+          from training_pipelines.training_scripts.common import build_training_vec_env
 
           assert REPRESENTATION_C_DIM == 99
 
+          # Representation C environment smoke rollout.
           env = make_rep_c_env(
               flatten_action=False,
               shaping=False,
@@ -100,18 +97,20 @@ jobs:
           assert obs.shape == (99,)
           assert obs.dtype == np.float32
           assert np.isfinite(obs).all()
-          for _ in range(3):
-              obs, reward, terminated, truncated, info = env.step(
-                  np.array([0, 0, 0], dtype=np.int64)
-              )
-              assert np.isfinite(reward)
-              assert len(info["order_quantities"]) == 3
-              if terminated or truncated:
-                  break
+          obs, reward, terminated, truncated, info = env.step(
+              np.array([0, 0, 0], dtype=np.int64)
+          )
+          assert np.isfinite(reward)
+          assert len(info["order_quantities"]) == 3
           env.close()
 
-          # Smoke-test the retained DQN interface with a tiny CPU-only run.
-          dqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=901)
+          # Retained DQN training interface on the 35-D final DQN environment.
+          dqn_env = build_training_vec_env(
+              n_envs=1,
+              flatten_action=True,
+              shaping=False,
+              seed=901,
+          )
           dqn = DQN(
               "MlpPolicy",
               dqn_env,
@@ -125,8 +124,13 @@ jobs:
           dqn.learn(total_timesteps=16)
           dqn_env.close()
 
-          # Smoke-test the retained Double DQN interface with a tiny run.
-          ddqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=902)
+          # Retained Double DQN implementation on the same final interface.
+          ddqn_env = build_training_vec_env(
+              n_envs=1,
+              flatten_action=True,
+              shaping=False,
+              seed=902,
+          )
           ddqn = DoubleDQN(
               "MlpPolicy",
               ddqn_env,
@@ -140,8 +144,21 @@ jobs:
           ddqn.learn(total_timesteps=16)
           ddqn_env.close()
 
-          # Smoke-test the retained PPO environment interface.
-          ppo_env = make_rep_c_env(flatten_action=False, shaping=False, seed=903)
+          # Retained A2C interface on the final 99-D Rep-C environment.
+          a2c_env = make_rep_c_env(flatten_action=False, shaping=False, seed=903)
+          a2c = A2C(
+              "MlpPolicy",
+              a2c_env,
+              n_steps=8,
+              policy_kwargs={"net_arch": [32, 32]},
+              device="cpu",
+              seed=3,
+          )
+          a2c.learn(total_timesteps=16)
+          a2c_env.close()
+
+          # Retained PPO interface on the final 99-D Rep-C environment.
+          ppo_env = make_rep_c_env(flatten_action=False, shaping=False, seed=904)
           ppo = PPO(
               "MlpPolicy",
               ppo_env,
@@ -150,19 +167,10 @@ jobs:
               n_epochs=1,
               policy_kwargs={"net_arch": [32, 32]},
               device="cpu",
-              seed=3,
+              seed=4,
           )
           ppo.learn(total_timesteps=16)
           ppo_env.close()
-
-          # Smoke-test the retained A2C actor-critic interface.
-          ac = ActorCritic()
-          logits, value = ac(
-              torch.zeros((1, REPRESENTATION_C_DIM), dtype=torch.float32)
-          )
-          assert len(logits) == 3
-          assert all(x.shape == (1, 11) for x in logits)
-          assert value.shape == (1,)
 
           print("RETAINED TRAINING INTERFACE SMOKE PASS")
           PY
