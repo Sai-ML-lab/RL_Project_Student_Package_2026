@@ -9,10 +9,10 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from industrial_inventory_env import IndustrialInventoryEnv
-from training_utils.action_wrapper import FlattenAction
-from training_utils.reward_shaping import ShapedReward
 from training_pipelines.src.features.representation_c import RepresentationCObsWrapper
-from training_utils import load_assigned_config
+from training_pipelines.training_utils.action_wrapper import FlattenAction
+from training_pipelines.training_utils.reward_shaping import ShapedReward
+from training_pipelines.training_utils.env_factory import load_assigned_config
 
 
 def make_rep_c_env(
