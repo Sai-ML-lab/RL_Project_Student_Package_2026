@@ -12,12 +12,10 @@ env.step().
 from __future__ import annotations
 
 import argparse
-import math
 import multiprocessing as mp
 import os
 import random
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -80,7 +78,6 @@ def _worker(
     shared_model: ActorCritic,
     optimizer: SharedAdam,
     counter,
-    lock,
     args,
 ) -> None:
     seed = args.seed + 1009 * rank
@@ -114,14 +111,13 @@ def _worker(
             counter.value += rollout_steps
 
         local_model.load_state_dict(shared_model.state_dict())
+        local_model.zero_grad(set_to_none=True)
 
-        observations = []
-        actions = []
-        rewards = []
-        values = []
-        log_probs = []
-        entropies = []
-        dones = []
+        rewards: list[float] = []
+        values: list[torch.Tensor] = []
+        log_probs: list[torch.Tensor] = []
+        entropies: list[torch.Tensor] = []
+        dones: list[float] = []
 
         for _ in range(rollout_steps):
             obs_t = torch.from_numpy(obs).float().unsqueeze(0)
@@ -135,8 +131,6 @@ def _worker(
             done = bool(terminated or truncated)
             next_obs = flatten_observation_representation_c(next_obs)
 
-            observations.append(obs)
-            actions.append(action_idx)
             rewards.append(float(reward))
             values.append(value.squeeze(0))
             log_probs.append(dist.log_prob(action).squeeze(0))
@@ -159,13 +153,14 @@ def _worker(
                 episode_steps = 0
 
         with torch.no_grad():
-            next_value = torch.zeros(1)
-            if not dones[-1]:
+            if dones[-1]:
+                next_value = torch.tensor(0.0)
+            else:
                 _, next_value_batch = local_model(torch.from_numpy(obs).float().unsqueeze(0))
-                next_value = next_value_batch.detach().cpu()
+                next_value = next_value_batch.squeeze(0).detach()
 
-        returns = []
-        advantages = []
+        returns: list[torch.Tensor] = []
+        advantages: list[torch.Tensor] = []
         gae = torch.tensor(0.0)
         for t in reversed(range(rollout_steps)):
             mask = 1.0 - dones[t]
@@ -184,26 +179,29 @@ def _worker(
         log_prob_t = torch.stack(log_probs)
         entropy_t = torch.stack(entropies)
 
-        if args.normalize_advantage:
-            advantage_t = (advantage_t - advantage_t.mean()) / (advantage_t.std(unbiased=False) + 1e-8)
+        if args.normalize_advantage and advantage_t.numel() > 1:
+            advantage_t = (advantage_t - advantage_t.mean()) / (
+                advantage_t.std(unbiased=False) + 1e-8
+            )
 
         policy_loss = -(log_prob_t * advantage_t.detach()).mean()
         value_loss = F.smooth_l1_loss(value_t, return_t.detach())
         entropy_bonus = entropy_t.mean()
         loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy_bonus
 
-        optimizer.zero_grad()
+        # Clear any stale gradients on the shared optimizer/model, then apply
+        # the current worker's local gradients to the shared parameters.
+        optimizer.zero_grad(set_to_none=True)
+        local_model.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), args.max_grad_norm)
 
-        # Copy local gradients into shared parameters, then apply a shared Adam
-        # update. The shared optimizer state permits asynchronous worker updates.
         for shared_param, local_param in zip(shared_model.parameters(), local_model.parameters()):
             if local_param.grad is not None:
-                shared_param._grad = local_param.grad.detach().clone()
+                shared_param.grad = local_param.grad.detach().clone()
         optimizer.step()
 
-        if rank == 0 and (counter.value // args.rollout_steps) % 10 == 0:
+        if rank == 0 and counter.value % max(args.rollout_steps * 50, 1) < args.rollout_steps:
             elapsed = time.perf_counter() - started
             print(
                 f"[A3C] global_steps={counter.value:,}/{args.total_steps:,} "
@@ -229,6 +227,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260902)
     parser.add_argument("--run-name", type=str, default="a3c_rep_c")
     parser.add_argument("--no-shaping", action="store_true")
+    parser.add_argument("--normalize-advantage", action="store_true")
     args = parser.parse_args()
 
     if args.total_steps < 1 or args.workers < 1 or args.rollout_steps < 1:
@@ -243,13 +242,12 @@ def main() -> int:
     shared_model.share_memory()
     optimizer = SharedAdam(shared_model.parameters(), lr=args.learning_rate)
     counter = ctx.Value("i", 0)
-    lock = ctx.Lock()
 
     processes: list[mp.Process] = []
     for rank in range(args.workers):
         process = ctx.Process(
             target=_worker,
-            args=(rank, shared_model, optimizer, counter, lock, args),
+            args=(rank, shared_model, optimizer, counter, args),
         )
         process.start()
         processes.append(process)
