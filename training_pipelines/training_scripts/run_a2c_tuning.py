@@ -1,4 +1,4 @@
-"""Focused A2C hyperparameter screening on the canonical 76-D Representation B."""
+"""Focused A2C hyperparameter screening on the canonical 35-D observation representation."""
 from __future__ import annotations
 
 import argparse
@@ -36,17 +36,33 @@ def _evaluate(model_path: Path, seed_count: int) -> dict[str, float]:
             str(seed_count),
         ],
         cwd=PROJECT_ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+
+    # Always surface evaluator output so a failed screening run is diagnosable.
+    if completed.stdout:
+        print(completed.stdout, end="", flush=True)
+    if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr, flush=True)
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"A2C evaluator failed with exit code {completed.returncode} "
+            f"for model {model_path}"
+        )
+
     cost_match = re.search(r"mean_cost=([0-9.,]+)", completed.stdout)
     service_match = re.search(r"mean_service_level=([0-9.]+)", completed.stdout)
     if cost_match is None:
         raise RuntimeError("Could not parse A2C mean_cost from evaluator output")
+
     return {
         "quick_mean_cost": float(cost_match.group(1).replace(",", "")),
-        "quick_mean_service_level": float(service_match.group(1)) if service_match else float("nan"),
+        "quick_mean_service_level": (
+            float(service_match.group(1)) if service_match else float("nan")
+        ),
     }
 
 
