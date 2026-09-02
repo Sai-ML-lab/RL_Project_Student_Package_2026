@@ -25,7 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from evaluation import HOLDOUT_SEEDS, SCENARIO_MODES, evaluate_policy, summarise_overall
 from src.algorithms.common.checkpoint import load_checkpoint
 from src.algorithms.common.networks import QNetwork
-from src.environment.action_codec import decode_joint_action
+from src.environment.action_codec import joint_index_to_quantities
 from src.features.engineered import REPRESENTATION_B_DIM, flatten_observation_representation_b
 
 
@@ -50,7 +50,7 @@ def main() -> int:
     args = parser.parse_args()
 
     checkpoint_path = _resolve_checkpoint(args.checkpoint)
-    payload = load_checkpoint(checkpoint_path, map_location="cpu")
+    payload = load_checkpoint(checkpoint_path)
     obs_dim = int(payload["obs_dim"])
     n_actions = int(payload["n_actions"])
     hidden_sizes = tuple(int(x) for x in payload["hidden_sizes"])
@@ -69,8 +69,7 @@ def main() -> int:
         with torch.no_grad():
             q_values = model(torch.from_numpy(np.asarray(features, dtype=np.float32)).unsqueeze(0))
         action_index = int(torch.argmax(q_values, dim=-1).item())
-        quantities = decode_joint_action(action_index)
-        values = [int(x) for x in quantities]
+        values = [int(x) for x in joint_index_to_quantities(action_index)]
         if len(values) != 3 or any(x < 0 or x > 100 or x % 10 for x in values):
             raise ValueError(f"Unexpected decoded action: {values}")
         return values
@@ -97,7 +96,14 @@ def main() -> int:
 
     result = {
         "checkpoint": str(checkpoint_path),
-        "overall": {str(k): (float(v) if isinstance(v, (np.floating, float)) else int(v) if isinstance(v, (np.integer, int)) else v) for k, v in overall.items()},
+        "overall": {
+            str(k): (
+                float(v) if isinstance(v, (np.floating, float))
+                else int(v) if isinstance(v, (np.integer, int))
+                else v
+            )
+            for k, v in overall.items()
+        },
         "scenario_summary": scenario_summary.to_dict(orient="records"),
     }
     output_path = args.output or (checkpoint_path.parent / "official_holdout.json")
