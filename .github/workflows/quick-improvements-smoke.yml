@@ -1,0 +1,192 @@
+name: Final Release Smoke Test
+
+on:
+  push:
+    branches:
+      - quick-improvements-a3c-tuning
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile all Python files
+        run: python -m compileall -q .
+
+      - name: Verify final submission artifacts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import zipfile
+
+          checks = {
+              "ppo": ("model.zip", True),
+              "dqn": ("model.zip", True),
+              "a2c": ("model.zip", True),
+              "double_dqn": ("model.zip", True),
+              "neural_sarsa": ("policy_state.pt", False),
+          }
+
+          for name, (artifact, is_zip) in checks.items():
+              d = Path("submissions") / name
+              assert (d / "policy.py").is_file(), f"{name}: policy.py missing"
+              assert (d / "metadata.json").is_file(), f"{name}: metadata.json missing"
+              assert (d / artifact).is_file(), f"{name}: {artifact} missing"
+
+              metadata = json.loads((d / "metadata.json").read_text())
+              declared_policy = metadata.get("policy_file")
+              declared_artifact = metadata.get("model_artifact")
+
+              # Frozen metadata schemas vary across retained submissions.
+              # Validate these fields when present rather than requiring them
+              # for every historical metadata format.
+              if declared_policy is not None:
+                  assert declared_policy == "policy.py", (
+                      f"{name}: unexpected policy_file={declared_policy!r}"
+                  )
+              if declared_artifact is not None:
+                  assert declared_artifact == artifact, (
+                      f"{name}: unexpected model_artifact={declared_artifact!r}"
+                  )
+
+              if is_zip:
+                  with zipfile.ZipFile(d / artifact) as zf:
+                      assert zf.testzip() is None, f"{name}: corrupt ZIP"
+
+              print(f"PASS: {name}")
+
+          assert not Path("finalize_release.py").exists()
+          assert not Path("submissions/a2c_rep_c_candidate_v030").exists()
+          assert not Path("results/raw_training_curves").exists()
+          print("FINAL ARTIFACT CHECK PASS")
+          PY
+
+      - name: Run course policy validator
+        run: |
+          python policy_validation_tests.py submissions/ppo/policy.py
+          python policy_validation_tests.py submissions/dqn/policy.py
+          python policy_validation_tests.py submissions/neural_sarsa/policy.py
+          python policy_validation_tests.py submissions/a2c/policy.py
+          python policy_validation_tests.py submissions/double_dqn/policy.py
+
+      - name: Smoke test retained training interfaces
+        run: |
+          python - <<'PY'
+          import sys
+
+          sys.path.insert(0, "training_pipelines")
+
+          import numpy as np
+          from stable_baselines3 import A2C, DQN, PPO
+
+          from training_pipelines.src.features.representation_c import REPRESENTATION_C_DIM
+          from training_pipelines.training_utils.rep_c_env import make_rep_c_env
+          from training_pipelines.training_scripts.common import build_training_vec_env
+          from training_pipelines.training_scripts.train_double_dqn_experiment import DoubleDQN
+
+          assert REPRESENTATION_C_DIM == 99
+
+          # Representation C environment smoke rollout.
+          env = make_rep_c_env(
+              flatten_action=False,
+              shaping=False,
+              seed=900,
+              scenario_mode="stationary",
+              domain_randomization=False,
+          )
+          obs, _ = env.reset(seed=900)
+          assert obs.shape == (99,)
+          assert obs.dtype == np.float32
+          assert np.isfinite(obs).all()
+          obs, reward, terminated, truncated, info = env.step(
+              np.array([0, 0, 0], dtype=np.int64)
+          )
+          assert np.isfinite(reward)
+          assert len(info["order_quantities"]) == 3
+          env.close()
+
+          # Retained DQN interface on the 35-D final DQN environment.
+          dqn_env = build_training_vec_env(
+              n_envs=1,
+              flatten_action=True,
+              shaping=False,
+              seed=901,
+          )
+          dqn = DQN(
+              "MlpPolicy",
+              dqn_env,
+              policy_kwargs={"net_arch": [32, 32]},
+              learning_starts=1,
+              buffer_size=32,
+              batch_size=8,
+              device="cpu",
+              seed=1,
+          )
+          dqn.learn(total_timesteps=16)
+          dqn_env.close()
+
+          # Retained Double DQN implementation on the same final 35-D interface.
+          ddqn_env = build_training_vec_env(
+              n_envs=1,
+              flatten_action=True,
+              shaping=False,
+              seed=902,
+          )
+          ddqn = DoubleDQN(
+              "MlpPolicy",
+              ddqn_env,
+              policy_kwargs={"net_arch": [32, 32]},
+              learning_starts=1,
+              buffer_size=32,
+              batch_size=8,
+              device="cpu",
+              seed=2,
+          )
+          ddqn.learn(total_timesteps=16)
+          ddqn_env.close()
+
+          # Retained A2C interface on the final 99-D Rep-C environment.
+          a2c_env = make_rep_c_env(flatten_action=False, shaping=False, seed=903)
+          a2c = A2C(
+              "MlpPolicy",
+              a2c_env,
+              n_steps=8,
+              policy_kwargs={"net_arch": [32, 32]},
+              device="cpu",
+              seed=3,
+          )
+          a2c.learn(total_timesteps=16)
+          a2c_env.close()
+
+          # Lightweight PPO training interface smoke test.
+          ppo_env = make_rep_c_env(flatten_action=False, shaping=False, seed=904)
+          ppo = PPO(
+              "MlpPolicy",
+              ppo_env,
+              n_steps=8,
+              batch_size=8,
+              n_epochs=1,
+              policy_kwargs={"net_arch": [32, 32]},
+              device="cpu",
+              seed=4,
+          )
+          ppo.learn(total_timesteps=16)
+          ppo_env.close()
+
+          print("RETAINED TRAINING INTERFACE SMOKE PASS")
+          PY

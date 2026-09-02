@@ -3,8 +3,7 @@
   "architecture": "Standard Double DQN with 256-256 MLP Q-network",
   "policy_file": "policy.py",
   "model_artifact": "model.zip",
-  "submission_archive": "double_dqn_submission.zip",
-  "observation_representation": "38-dimensional engineered feature vector derived only from the documented observation",
+  "observation_representation": "35-dimensional hand-engineered feature vector derived only from the documented observation",
   "action_space": "Full joint 1331-action space using base-11 encoding; run_policy returns quantities in {0,10,...,100}",
   "training_reward": "Official base reward plus training-time reward shaping; reported evaluation cost uses the unshaped environment cost",
   "hyperparameters": {
@@ -26,6 +25,7 @@
   },
   "portal_result": {
     "mean_cost": 115819.0,
-    "status": "best_Double_DQN_submission"
-  }
+    "status": "retained_final_submission"
+  },
+  "tuning_decision": "Additional targeted tuning was rejected; protected public artifact retained."
 }
