@@ -1,6 +1,7 @@
 """Shared helpers for training scripts."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -10,26 +11,26 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-# Support both invocation styles:
-#   python -m training_pipelines.training_scripts.<script>
-# and
-#   cd training_pipelines && python training_scripts/<script>.py
-try:
-    from training_pipelines.training_utils import (
-        load_assigned_config,
-        make_eval_env,
-        make_training_env,
-    )
-except ModuleNotFoundError:
-    from training_utils import (
-        load_assigned_config,
-        make_eval_env,
-        make_training_env,
-    )
+# Resolve both import roots explicitly so training scripts work when launched
+# directly from the repository root, from inside training_pipelines/, or with
+# Python's module invocation style.
+_TRAINING_PIPELINES_DIR = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = _TRAINING_PIPELINES_DIR.parent
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODELS_DIR = PROJECT_ROOT / "models"
-LOGS_DIR = PROJECT_ROOT / "logs"
+for _path in (_PROJECT_ROOT, _TRAINING_PIPELINES_DIR):
+    _path_str = str(_path)
+    if _path_str not in sys.path:
+        sys.path.insert(0, _path_str)
+
+from training_pipelines.training_utils import (
+    load_assigned_config,
+    make_eval_env,
+    make_training_env,
+)
+
+PROJECT_ROOT = _PROJECT_ROOT
+MODELS_DIR = PROJECT_ROOT / "training_pipelines" / "models"
+LOGS_DIR = PROJECT_ROOT / "training_pipelines" / "logs"
 
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
