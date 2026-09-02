@@ -48,7 +48,11 @@ def test_representation_b_ignores_early_zero_padding():
     observation["day"] = np.asarray([3], dtype=np.int32)
     features = flatten_observation_representation_b(observation)
 
-    # The 3-day mean features start after the 38 raw features, with 10
-    # engineered values per product; check the first product's 7-day mean.
+    # At day 3, only the final 3 rows are considered valid history. The
+    # preceding zero rows must not be included in the 7-day mean.
     first_product_seven_day_mean = features[38 + 2]
-    assert np.isclose(first_product_seven_day_mean, 30.0 / 200.0, atol=1e-6)
+    expected_valid_mean = np.mean([29.0, 30.0, 32.0])
+    all_rows_mean = np.mean([0.0, 0.0, 30.0, 31.0, 29.0, 30.0, 32.0])
+
+    assert np.isclose(first_product_seven_day_mean, expected_valid_mean, atol=1e-6)
+    assert not np.isclose(first_product_seven_day_mean, all_rows_mean, atol=1e-6)
