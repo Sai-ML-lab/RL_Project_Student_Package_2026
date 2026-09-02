@@ -1,8 +1,9 @@
-"""Small A3C hyperparameter screen for Representation C.
+"""A3C hyperparameter screening for Representation C.
 
-Each selected configuration is trained, then evaluated on a quick official
-holdout (default 10 seeds x 5 scenarios = 50 episodes). Only the quick score is
-used for ranking; the final promotion can use the full 200-episode suite.
+Each selected configuration is trained for a meaningful budget, then evaluated
+on the quick official holdout (default 10 seeds x 5 scenarios = 50 episodes).
+The smoke test is only an execution check; screening scores are used to select
+configurations for the full 200-episode evaluation.
 """
 from __future__ import annotations
 
@@ -19,19 +20,22 @@ EVAL_SCRIPT = PROJECT_ROOT / "training_pipelines" / "training_scripts" / "evalua
 RESULTS_DIR = PROJECT_ROOT / "tuning_results" / "a3c"
 
 CONFIGS = [
-    {"learning_rate": 1e-4, "gamma": 0.98, "gae_lambda": 0.95, "entropy_coef": 0.001, "rollout_steps": 20},
-    {"learning_rate": 3e-4, "gamma": 0.98, "gae_lambda": 0.95, "entropy_coef": 0.005, "rollout_steps": 20},
+    {"learning_rate": 1e-4, "gamma": 0.99, "gae_lambda": 0.95, "entropy_coef": 0.010, "rollout_steps": 20},
+    {"learning_rate": 2e-4, "gamma": 0.99, "gae_lambda": 0.95, "entropy_coef": 0.005, "rollout_steps": 20},
     {"learning_rate": 3e-4, "gamma": 0.99, "gae_lambda": 0.95, "entropy_coef": 0.005, "rollout_steps": 20},
     {"learning_rate": 5e-4, "gamma": 0.99, "gae_lambda": 0.95, "entropy_coef": 0.001, "rollout_steps": 20},
-    {"learning_rate": 3e-4, "gamma": 0.99, "gae_lambda": 1.00, "entropy_coef": 0.005, "rollout_steps": 10},
-    {"learning_rate": 3e-4, "gamma": 0.99, "gae_lambda": 0.90, "entropy_coef": 0.001, "rollout_steps": 40},
+    {"learning_rate": 3e-4, "gamma": 0.995, "gae_lambda": 0.95, "entropy_coef": 0.005, "rollout_steps": 20},
+    {"learning_rate": 3e-4, "gamma": 0.99, "gae_lambda": 0.90, "entropy_coef": 0.005, "rollout_steps": 40},
+    {"learning_rate": 2e-4, "gamma": 0.98, "gae_lambda": 0.95, "entropy_coef": 0.001, "rollout_steps": 40},
+    {"learning_rate": 3e-4, "gamma": 0.99, "gae_lambda": 1.00, "entropy_coef": 0.001, "rollout_steps": 10},
 ]
 
 
 def _evaluate_quick(model_path: Path, seed_count: int) -> dict[str, float]:
     cmd = [
         sys.executable,
-        str(EVAL_SCRIPT),
+        "-m",
+        "training_pipelines.training_scripts.evaluate_a3c_rep_c",
         "--model",
         str(model_path),
         "--seeds",
@@ -69,7 +73,6 @@ def _run(config: dict, steps: int, seed: int, workers: int, eval_seeds: int) -> 
         "--seed", str(seed),
         "--run-name", run_name,
         "--normalize-advantage",
-        "--quiet",
     ]
     for key, value in config.items():
         cmd.extend([f"--{key.replace('_', '-')}", str(value)])
@@ -77,7 +80,11 @@ def _run(config: dict, steps: int, seed: int, workers: int, eval_seeds: int) -> 
     print(f"\n=== A3C {run_name} ===", flush=True)
     subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
 
-    model_path = PROJECT_ROOT / "models" / "a3c_rep_c_experiments" / run_name / "a3c_model.pt"
+    model_path = PROJECT_ROOT / "training_pipelines" / "models" / "a3c_rep_c_experiments" / run_name / "a3c_model.pt"
+    if not model_path.exists():
+        # Current common.py resolves MODELS_DIR under training_pipelines.
+        raise FileNotFoundError(f"A3C checkpoint was not created: {model_path}")
+
     scores = _evaluate_quick(model_path, eval_seeds)
     payload = {
         "model": str(model_path),
@@ -85,6 +92,7 @@ def _run(config: dict, steps: int, seed: int, workers: int, eval_seeds: int) -> 
         "run_name": run_name,
         "steps": steps,
         "workers": workers,
+        "eval_seeds": eval_seeds,
         **scores,
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
