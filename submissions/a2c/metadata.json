@@ -1,25 +1,31 @@
-
 {
   "technique_category": "Advantage Actor-Critic (A2C)",
   "policy_file": "policy.py",
   "model_artifact": "model.zip",
-  "observation_representation": "35-dim hand-engineered features (training_utils/obs_wrapper.py::flatten_observation); joint action encoded as MultiDiscrete([11, 11, 11]) over quantities {0, 10, ..., 100} per product",
-  "reward_used_during_training": "Base environment reward (negative scaled daily cost) plus an auxiliary ShapedReward wrapper (extra stockout penalty, discard/utilisation penalty, order-batching nudge) annealed linearly to zero over the training budget. All reported cost/service metrics use the raw, unshaped environment reward -- shaping never affects evaluation or this frozen policy.",
+  "observation_representation": "99-dimensional Representation C: Representation B (76-D) plus EWMA demand, demand slope, coefficient of variation, recent min/max, lead-time demand uncertainty, safety stock, and weekly phase features; all derived only from the documented observation",
+  "action_space": "MultiDiscrete([11, 11, 11]) with returned quantities in {0, 10, ..., 100} per product",
+  "reward_used_during_training": "Official base reward plus training-time ShapedReward terms, annealed to zero over the training budget; all reported validation and leaderboard costs use the official unshaped environment",
   "main_hyperparameters": {
-    "learning_rate": 0.0007,
-    "n_steps": 32,
-    "gae_lambda": 1.0,
-    "ent_coef": 0.01,
+    "learning_rate": 0.0005,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.001,
+    "n_steps": 64,
+    "vf_coef": 0.5,
     "net_arch": [128, 128],
-    "total_timesteps": 200000
+    "total_timesteps": 500000,
+    "seed": 20260902
   },
-  "training_pipeline_scripts": ["training_pipelines/training_scripts/train_a2c.py"],
-  "notes": "A later 12-configuration screen + 3-seed promotion refinement attempt did not beat this original iteration-1 model, so the original was kept.",
+  "training_pipeline_scripts": ["training_pipelines/run_a2c_rep_c_candidate.py"],
   "local_validation_performance": {
-    "suite": "A (assigned configuration, 40 seeds x 5 scenario modes = 200 episodes)",
-    "mean_cost": 114669.1,
-    "mean_service_level": 0.969282,
-    "minimum_scenario_service_level": 0.963480
+    "suite": "Official assigned-configuration holdout, 40 seeds x 5 scenario modes = 200 episodes",
+    "mean_cost": 94180.86,
+    "mean_service_level": 0.994717
   },
+  "leaderboard_performance": {
+    "public_mean_cost": 94660.12,
+    "public_status": "submitted"
+  },
+  "selection_decision": "Replace the previous A2C submission; this Rep-C candidate materially improves the portfolio average while maintaining high service level.",
   "leaderboard_submission_id": null
 }
