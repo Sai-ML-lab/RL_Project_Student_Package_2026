@@ -22,10 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from training_pipelines.src.features.representation_c import (
-    REPRESENTATION_C_DIM,
-    flatten_observation_representation_c,
-)
+from training_pipelines.src.features.representation_c import REPRESENTATION_C_DIM
 from training_pipelines.training_utils.rep_c_env import make_rep_c_env
 from training_pipelines.training_scripts.common import MODELS_DIR
 
@@ -85,9 +82,7 @@ def _sample_factorized_action(logits_list: list[torch.Tensor]):
     log_prob = sum(
         dist.log_prob(action) for dist, action in zip(distributions, actions)
     )
-    entropy = sum(
-        dist.entropy() for dist in distributions
-    )
+    entropy = sum(dist.entropy() for dist in distributions)
     action_indices = [int(action.item()) for action in actions]
     return action_indices, log_prob.squeeze(), entropy.squeeze()
 
@@ -118,8 +113,16 @@ def _worker(
     local_model.load_state_dict(shared_model.state_dict())
     local_model.train()
 
-    raw_obs, _ = env.reset(seed=seed)
-    obs = flatten_observation_representation_c(raw_obs)
+    # make_rep_c_env already applies RepresentationCObsWrapper, so reset/step
+    # return the final 99-D float32 numpy observation directly. Do not flatten
+    # it again; flatten_observation_representation_c expects the raw dict form.
+    obs, _ = env.reset(seed=seed)
+    obs = np.asarray(obs, dtype=np.float32)
+    if obs.shape != (REPRESENTATION_C_DIM,) or not np.isfinite(obs).all():
+        raise RuntimeError(
+            f"Unexpected Rep-C observation: shape={obs.shape}, finite={np.isfinite(obs).all()}"
+        )
+
     episode_return = 0.0
     episode_steps = 0
     started = time.perf_counter()
@@ -146,9 +149,14 @@ def _worker(
             action_indices, log_prob, entropy = _sample_factorized_action(logits_list)
             multi_action = np.asarray(action_indices, dtype=np.int64)
 
-            next_raw_obs, reward, terminated, truncated, _info = env.step(multi_action)
+            next_obs, reward, terminated, truncated, _info = env.step(multi_action)
             done = bool(terminated or truncated)
-            next_obs = flatten_observation_representation_c(next_raw_obs)
+            next_obs = np.asarray(next_obs, dtype=np.float32)
+            if next_obs.shape != (REPRESENTATION_C_DIM,) or not np.isfinite(next_obs).all():
+                raise RuntimeError(
+                    f"Unexpected Rep-C observation after step: shape={next_obs.shape}, "
+                    f"finite={np.isfinite(next_obs).all()}"
+                )
 
             rewards.append(float(reward))
             values.append(value.squeeze(0))
@@ -161,8 +169,8 @@ def _worker(
             obs = next_obs
 
             if done:
-                raw_obs, _ = env.reset()
-                obs = flatten_observation_representation_c(raw_obs)
+                obs, _ = env.reset()
+                obs = np.asarray(obs, dtype=np.float32)
                 if rank == 0:
                     print(
                         f"[A3C worker {rank}] episode return={episode_return:.2f} "
@@ -223,8 +231,6 @@ def _worker(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(local_model.parameters(), args.max_grad_norm)
 
-        # Keep the critical shared-memory update atomic. Workers remain
-        # asynchronous in environment interaction and rollout computation.
         with update_lock:
             optimizer.zero_grad(set_to_none=True)
             for shared_param, local_param in zip(
