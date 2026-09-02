@@ -1,0 +1,35 @@
+{
+  "status": "pending_public_score",
+  "method": "A2C",
+  "representation": "C",
+  "variant": "V030",
+  "holdout": {
+    "episodes": 200,
+    "mean_cost": 94180.86,
+    "std_cost": 7961.56,
+    "median_cost": 92897.50,
+    "mean_service_level": 0.994717
+  },
+  "scenario_mean_cost": {
+    "random": 94911.875,
+    "seasonal": 92426.0,
+    "shock": 95611.6875,
+    "stationary": 92332.5,
+    "trend": 95622.25
+  },
+  "hyperparameters": {
+    "learning_rate": 0.0005,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "ent_coef": 0.001,
+    "n_steps": 64,
+    "vf_coef": 0.5,
+    "shaping": true
+  },
+  "baseline": {
+    "protected_a2c_local_mean_cost": 114669.1,
+    "local_improvement": 20488.24,
+    "relative_improvement": 0.178656
+  },
+  "promotion_policy": "Do not replace protected main A2C until the public score is available and multi-seed robustness is confirmed."
+}
