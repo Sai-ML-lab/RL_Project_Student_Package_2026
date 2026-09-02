@@ -1,0 +1,86 @@
+name: Quick Improvements Smoke Test
+
+on:
+  push:
+    branches:
+      - quick-improvements-a3c-tuning
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Compile all Python files
+        run: python -m compileall -q .
+
+      - name: Run existing and new feature tests
+        run: pytest -q training_pipelines/tests
+
+      - name: End-to-end smoke imports and environment rollout
+        run: |
+          python - <<'PY'
+          import numpy as np
+          import torch
+          from stable_baselines3 import DQN, PPO
+          from training_pipelines.src.features.representation_c import (
+              REPRESENTATION_C_DIM,
+              flatten_observation_representation_c,
+          )
+          from training_pipelines.training_utils.rep_c_env import make_rep_c_env
+          from training_pipelines.training_scripts.train_double_dqn_rep_c import DoubleDQN
+          from training_pipelines.training_scripts.train_a3c_rep_c import ActorCritic
+          from industrial_inventory_env import IndustrialInventoryEnv
+          from training_pipelines.training_utils.env_factory import load_assigned_config
+
+          assert REPRESENTATION_C_DIM == 99
+          env = make_rep_c_env(
+              flatten_action=False,
+              shaping=False,
+              seed=900,
+              scenario_mode='stationary',
+              domain_randomization=False,
+          )
+          obs, _ = env.reset(seed=900)
+          assert obs.shape == (99,)
+          assert obs.dtype == np.float32
+          assert np.isfinite(obs).all()
+          for _ in range(3):
+              obs, reward, terminated, truncated, info = env.step(np.array([0, 0, 0], dtype=np.int64))
+              assert np.isfinite(reward)
+              assert len(info['order_quantities']) == 3
+          env.close()
+
+          # Verify model constructors against the feature/action interfaces.
+          dqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=901)
+          dqn = DQN('MlpPolicy', dqn_env, policy_kwargs={'net_arch':[32,32]}, learning_starts=1, buffer_size=32, batch_size=8, device='cpu', seed=1)
+          dqn.learn(total_timesteps=16)
+          dqn_env.close()
+
+          ddqn_env = make_rep_c_env(flatten_action=True, shaping=False, seed=902)
+          ddqn = DoubleDQN('MlpPolicy', ddqn_env, policy_kwargs={'net_arch':[32,32]}, learning_starts=1, buffer_size=32, batch_size=8, device='cpu', seed=2)
+          ddqn.learn(total_timesteps=16)
+          ddqn_env.close()
+
+          ppo_env = make_rep_c_env(flatten_action=False, shaping=False, seed=903)
+          ppo = PPO('MlpPolicy', ppo_env, n_steps=8, batch_size=8, n_epochs=1, policy_kwargs={'net_arch':[32,32]}, device='cpu', seed=3)
+          ppo.learn(total_timesteps=16)
+          ppo_env.close()
+
+          ac = ActorCritic()
+          logits, value = ac(torch.zeros((1, REPRESENTATION_C_DIM), dtype=torch.float32))
+          assert len(logits) == 3 and all(x.shape == (1, 11) for x in logits)
+          assert value.shape == (1,)
+          print('SMOKE PASS')
+          PY
