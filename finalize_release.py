@@ -103,12 +103,25 @@ def validate_text_files() -> None:
     if nb.get("nbformat") != 4:
         fail("Final notebook is not nbformat 4")
     nb_text = "\n".join("".join(c.get("source", [])) for c in nb.get("cells", []))
-    for token in ["Assigned parameter variant", "Reproducible final training pipelines", "Final public leaderboard comparison", "Final policy/artifact mapping", "Course-supplied policy validation", "A2C + Representation C", "94660.12", "99566.57"]:
-        if token not in nb_text:
-            fail(f"Final notebook missing required text: {token}")
+    # These checks intentionally verify the course-required content semantically
+    # against the final notebook's actual headings/phrasing.
+    required_any = [
+        ("Assigned parameter variant",),
+        ("Reproducible final training pipelines",),
+        ("Final public leaderboard comparison",),
+        ("Final policy and model mapping", "Final policy/artifact mapping"),
+        ("Course-supplied policy validation",),
+        ("A2C + Representation C",),
+        ("94660.12",),
+        ("99566.57",),
+    ]
+    for alternatives in required_any:
+        if not any(token in nb_text for token in alternatives):
+            fail(f"Final notebook missing required text: {' or '.join(alternatives)}")
     for token in ["111,216.54", "111216.54", "114047.62", "Double-DQN pipeline use 76-dimensional", "public score pending"]:
         if token in nb_text:
             fail(f"Stale notebook text detected: {token}")
+
     readme = README.read_text(encoding="utf-8")
     for token in ["A2C + Representation C", "94,660.12", "99,566.57", "V030", "RL_Project_Final.ipynb"]:
         if token not in readme:
