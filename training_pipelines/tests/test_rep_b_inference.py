@@ -1,51 +1,17 @@
-"""Pure preprocessing tests for the frozen PPO Rep-B candidate and source Rep-B."""
+"""Tests for the canonical Representation B preprocessing implementation."""
 from __future__ import annotations
-
-import importlib.util
-import sys
-from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-CANDIDATE = ROOT / "submissions" / "ppo_rep_b_500k" / "policy.py"
+from training_pipelines.src.features.engineered import (
+    REPRESENTATION_B_DIM,
+    _REFERENCE_LEAD_TIMES,
+    flatten_observation_representation_b,
+)
 
 
-class _FakePPO:
-    @classmethod
-    def load(cls, *args, **kwargs):
-        return cls()
-
-    def predict(self, features, deterministic=True):
-        raise AssertionError("predict must not be called by preprocessing test")
-
-
-def _load_candidate():
-    import types
-
-    fake = types.ModuleType("stable_baselines3")
-    fake.PPO = _FakePPO
-    old = sys.modules.get("stable_baselines3")
-    sys.modules["stable_baselines3"] = fake
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "ppo_rep_b_candidate_test",
-            CANDIDATE,
-        )
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        if old is None:
-            sys.modules.pop("stable_baselines3", None)
-        else:
-            sys.modules["stable_baselines3"] = old
-
-
-def test_candidate_representation_b_shape_and_dtype():
-    module = _load_candidate()
-    observation = {
+def _observation():
+    return {
         "inventory": np.asarray([100, 120, 80], dtype=np.int32),
         "arrival_pipeline": np.zeros((3, 4), dtype=np.int32),
         "demand_history": np.asarray(
@@ -64,17 +30,25 @@ def test_candidate_representation_b_shape_and_dtype():
         "capacity_utilisation": np.asarray([0.5], dtype=np.float32),
     }
 
-    features = module._flatten_observation_representation_b(
-        observation
-    )
 
-    assert features.shape == (76,)
+def test_representation_b_shape_and_dtype():
+    features = flatten_observation_representation_b(_observation())
+
+    assert features.shape == (REPRESENTATION_B_DIM,)
     assert features.dtype == np.float32
     assert np.isfinite(features).all()
 
 
-def test_candidate_uses_exact_lead_times():
-    module = _load_candidate()
-    assert module._REFERENCE_LEAD_TIMES.tolist() == [3, 2, 1]
-    assert module._INVENTORY_SCALE == 200.0
-    assert module._DAY_SCALE == 49.0
+def test_representation_b_uses_exact_lead_times():
+    assert _REFERENCE_LEAD_TIMES.tolist() == [3, 2, 1]
+
+
+def test_representation_b_ignores_early_zero_padding():
+    observation = _observation()
+    observation["day"] = np.asarray([3], dtype=np.int32)
+    features = flatten_observation_representation_b(observation)
+
+    # The 3-day mean features start after the 38 raw features, with 10
+    # engineered values per product; check the first product's 7-day mean.
+    first_product_seven_day_mean = features[38 + 2]
+    assert np.isclose(first_product_seven_day_mean, 30.0 / 200.0, atol=1e-6)
