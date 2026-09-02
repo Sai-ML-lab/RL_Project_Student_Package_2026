@@ -75,13 +75,17 @@ jobs:
       - name: Smoke test retained training interfaces
         run: |
           python - <<'PY'
+          import sys
+
+          sys.path.insert(0, "training_pipelines")
+
           import numpy as np
           from stable_baselines3 import A2C, DQN, PPO
 
           from training_pipelines.src.features.representation_c import REPRESENTATION_C_DIM
-          from training_pipelines.training_scripts.train_double_dqn_experiment import DoubleDQN
           from training_pipelines.training_utils.rep_c_env import make_rep_c_env
           from training_pipelines.training_scripts.common import build_training_vec_env
+          from training_pipelines.training_scripts.train_double_dqn_experiment import DoubleDQN
 
           assert REPRESENTATION_C_DIM == 99
 
@@ -104,7 +108,7 @@ jobs:
           assert len(info["order_quantities"]) == 3
           env.close()
 
-          # Retained DQN training interface on the 35-D final DQN environment.
+          # Retained DQN interface on the 35-D final DQN environment.
           dqn_env = build_training_vec_env(
               n_envs=1,
               flatten_action=True,
@@ -124,7 +128,7 @@ jobs:
           dqn.learn(total_timesteps=16)
           dqn_env.close()
 
-          # Retained Double DQN implementation on the same final interface.
+          # Retained Double DQN implementation on the same final 35-D interface.
           ddqn_env = build_training_vec_env(
               n_envs=1,
               flatten_action=True,
