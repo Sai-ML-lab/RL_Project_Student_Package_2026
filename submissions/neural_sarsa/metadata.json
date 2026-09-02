@@ -1,4 +1,3 @@
-
 {
   "technique_category": "Neural Network SARSA",
   "policy_file": "policy.py",
@@ -16,8 +15,7 @@
     "total_transitions": 500000
   },
   "training_pipeline_scripts": [
-    "training_pipelines/run_neural_sarsa_screening_v2.py",
-    "training_pipelines/run_neural_sarsa_promote_v2.py"
+    "training_pipelines/training_scripts/train_neural_sarsa_final.py"
   ],
   "local_validation_performance": {
     "suite": "A (assigned configuration, 40 seeds x 5 scenario modes = 200 episodes)",
