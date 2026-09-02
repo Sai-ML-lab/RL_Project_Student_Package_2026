@@ -1,0 +1,31 @@
+{
+  "technique_category": "Double DQN",
+  "architecture": "Standard Double DQN with 256-256 MLP Q-network",
+  "policy_file": "policy.py",
+  "model_artifact": "model.zip",
+  "submission_archive": "double_dqn_submission.zip",
+  "observation_representation": "38-dimensional engineered feature vector derived only from the documented observation",
+  "action_space": "Full joint 1331-action space using base-11 encoding; run_policy returns quantities in {0,10,...,100}",
+  "training_reward": "Official base reward plus training-time reward shaping; reported evaluation cost uses the unshaped environment cost",
+  "hyperparameters": {
+    "learning_rate": 0.0005,
+    "buffer_size": 200000,
+    "learning_starts": 5000,
+    "batch_size": 256,
+    "tau": 1.0,
+    "gamma": 0.98,
+    "train_frequency": 4,
+    "gradient_steps": 1,
+    "target_update_interval": 2000,
+    "exploration_fraction": 0.3,
+    "exploration_initial_eps": 1.0,
+    "exploration_final_eps": 0.02,
+    "max_grad_norm": 10.0,
+    "network_architecture": [256, 256],
+    "device": "cpu"
+  },
+  "portal_result": {
+    "mean_cost": 115819.0,
+    "status": "best_Double_DQN_submission"
+  }
+}
