@@ -11,11 +11,22 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from training_utils import (
-    load_assigned_config,
-    make_eval_env,
-    make_training_env,
-)
+# Support both invocation styles:
+#   python -m training_pipelines.training_scripts.<script>
+# and
+#   cd training_pipelines && python training_scripts/<script>.py
+try:
+    from training_pipelines.training_utils import (
+        load_assigned_config,
+        make_eval_env,
+        make_training_env,
+    )
+except ModuleNotFoundError:
+    from training_utils import (
+        load_assigned_config,
+        make_eval_env,
+        make_training_env,
+    )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
@@ -80,9 +91,14 @@ def build_training_vec_env(
             env.reset(seed=seed + 1000 * rank)
             return env
 
-        return _make
+        return _factory_wrapper(_make)
 
     return DummyVecEnv([_factory(i) for i in range(n_envs)])
+
+
+def _factory_wrapper(factory: Callable[[], gym.Env]) -> Callable[[], gym.Env]:
+    """Return factory unchanged; kept explicit for clearer closure typing."""
+    return factory
 
 
 def build_eval_vec_env(
@@ -106,7 +122,7 @@ def build_eval_vec_env(
             env.reset(seed=seed + rank)
             return env
 
-        return _make
+        return _factory_wrapper(_make)
 
     return DummyVecEnv([_factory(i) for i in range(n_envs)])
 
