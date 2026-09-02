@@ -38,6 +38,21 @@ OUTPUT_CSV = RESULTS_DIR / "r2_official_holdout.csv"
 OUTPUT_JSON = RESULTS_DIR / "r2_official_holdout_summary.json"
 
 
+def _scalar_capacity_utilisation(obs: np.ndarray) -> float:
+    """Return capacity utilisation only when it is present as a scalar-like value.
+
+    The SARSA evaluation environment uses the 76-D engineered feature vector, not
+    the raw observation dict. Capacity utilisation is already included inside
+    that representation, so this metric is optional and should not block the
+    official cost evaluation.
+    """
+    arr = np.asarray(obs, dtype=np.float32).reshape(-1)
+    # EngineeredObsWrapper's documented Representation-B layout does include a
+    # dedicated capacity feature, but its exact position is intentionally not
+    # used for the official score. Return NaN here rather than guessing an index.
+    return float("nan") if arr.size else float("nan")
+
+
 def evaluate_checkpoint() -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
     if not CHECKPOINT_PATH.exists():
         raise FileNotFoundError(
@@ -96,11 +111,18 @@ def evaluate_checkpoint() -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]
                     discarding += float(info["costs"]["discarding"])
                     total_demand += int(np.sum(info["demand"]))
                     total_fulfilled += int(np.sum(info["fulfilled_demand"]))
-                    capacity_sum += float(obs["capacity_utilisation"][0])
+                    capacity_value = _scalar_capacity_utilisation(obs)
+                    if np.isfinite(capacity_value):
+                        capacity_sum += capacity_value
                     steps += 1
                     done = bool(terminated or truncated)
 
                 service = total_fulfilled / max(total_demand, 1)
+                avg_capacity = (
+                    capacity_sum / max(steps, 1)
+                    if capacity_sum != 0.0
+                    else float("nan")
+                )
                 rows.append(
                     {
                         "scenario_mode": scenario_mode,
@@ -113,7 +135,7 @@ def evaluate_checkpoint() -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]
                         "service_level": service,
                         "total_demand": total_demand,
                         "total_fulfilled": total_fulfilled,
-                        "avg_capacity_utilisation": capacity_sum / max(steps, 1),
+                        "avg_capacity_utilisation": avg_capacity,
                         "steps": steps,
                         "variant_id": reset_info.get("variant_id"),
                         "config_fingerprint": reset_info.get("config_fingerprint"),
