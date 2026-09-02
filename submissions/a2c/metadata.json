@@ -12,11 +12,14 @@
     "ent_coef": 0.001,
     "n_steps": 64,
     "vf_coef": 0.5,
-    "net_arch": [128, 128],
+    "net_arch": [256, 256],
+    "max_grad_norm": 0.5,
+    "use_rms_prop": true,
     "total_timesteps": 500000,
+    "n_envs": 4,
     "seed": 20260902
   },
-  "training_pipeline_scripts": ["training_pipelines/run_a2c_rep_c_candidate.py"],
+  "training_pipeline_scripts": ["training_pipelines/training_scripts/train_a2c_rep_c.py"],
   "local_validation_performance": {
     "suite": "Official assigned-configuration holdout, 40 seeds x 5 scenario modes = 200 episodes",
     "mean_cost": 94180.86,
